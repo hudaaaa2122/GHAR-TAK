@@ -1,0 +1,86 @@
+# Codemagic CI — builds iOS on a remote Mac (works while you develop on Windows).
+# Connect this GitHub repo in https://codemagic.io then add Apple credentials (see comments).
+#
+# Bundle ID (must match Apple Developer App ID):
+#   com.ghertak.ghertakMobile
+
+workflows:
+  ios-testflight:
+    name: iOS → TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    integrations:
+      # Create in Codemagic → Teams → Integrations → App Store Connect
+      # Name it exactly "ghertak_appstore" (or change this value to match).
+      app_store_connect: ghertak_appstore
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.ghertak.ghertakMobile
+      groups:
+        # Optional: add API_BASE_URL etc. in Codemagic UI under this group name.
+        - ghertak_env
+      vars:
+        APP_STORE_APPLE_ID: $APP_STORE_APPLE_ID
+    scripts:
+      - name: Flutter pub get
+        script: |
+          flutter pub get
+      - name: Install CocoaPods
+        script: |
+          cd ios && pod install
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
+      - name: Flutter build IPA
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist \
+            --dart-define=API_BASE_URL=https://api.ghertak.com \
+            --dart-define=USE_MOCK_DATA=false
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+    publishing:
+      email:
+        recipients:
+          - muqit121266@gmail.com
+        notify:
+          success: true
+          failure: true
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # Keep false until you intentionally submit for App Store review.
+        submit_to_app_store: false
+
+  android-release:
+    name: Android release APK
+    instance_type: linux_x2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      groups:
+        - ghertak_env
+    scripts:
+      - name: Flutter pub get
+        script: |
+          flutter pub get
+      - name: Build APK
+        script: |
+          flutter build apk --release \
+            --dart-define=API_BASE_URL=https://api.ghertak.com \
+            --dart-define=USE_MOCK_DATA=false
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+    publishing:
+      email:
+        recipients:
+          - muqit121266@gmail.com
+        notify:
+          success: true
+          failure: true

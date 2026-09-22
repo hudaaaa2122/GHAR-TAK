@@ -1,0 +1,51 @@
+# Optional alternative to Codemagic: GitHub-hosted macOS runner.
+# Enable after adding repository secrets (see jobs.env comments).
+# Does not run on every push — only manual "Run workflow".
+
+name: iOS TestFlight (manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      # Required secrets (Settings → Secrets and variables → Actions):
+      #   APP_STORE_CONNECT_KEY_ID
+      #   APP_STORE_CONNECT_ISSUER_ID
+      #   APP_STORE_CONNECT_PRIVATE_KEY   (full .p8 contents)
+      #   APPLE_TEAM_ID
+      #   MATCH or certificate setup — prefer Codemagic for Flutter signing unless you already use Fastlane Match.
+      BUNDLE_ID: com.ghertak.ghertakMobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+
+      - name: Build iOS (no codesign — artifact for local/Codemagic signing)
+        run: |
+          flutter build ios --release --no-codesign \
+            --dart-define=API_BASE_URL=https://api.ghertak.com \
+            --dart-define=USE_MOCK_DATA=false
+
+      - name: Upload unsigned build folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-release-unsigned
+          path: build/ios/iphoneos
+          if-no-files-found: error
