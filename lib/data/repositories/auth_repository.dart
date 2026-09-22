@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../constants/api_endpoints.dart';
 import '../../core/config/app_config.dart';
@@ -46,8 +47,40 @@ class AuthRepository {
       return user;
     }
 
-    // Real Google Sign-In SDK will plug in here later.
-    throw ApiException('Google Sign-In is not configured for live API yet');
+    if (AppConfig.googleClientId.isEmpty) {
+      throw ApiException('Google Sign-In is not configured');
+    }
+
+    final googleSignIn = GoogleSignIn(
+      scopes: const ['email', 'profile'],
+      // Web client ID → id_token audience matches backend GOOGLE_CLIENT_ID.
+      serverClientId: AppConfig.googleClientId,
+    );
+
+    try {
+      await googleSignIn.signOut();
+    } catch (_) {}
+
+    final account = await googleSignIn.signIn();
+    if (account == null) {
+      throw ApiException('Google sign-in cancelled');
+    }
+
+    final auth = await account.authentication;
+    final idToken = auth.idToken;
+    if (idToken == null || idToken.isEmpty) {
+      throw ApiException(
+        'Could not get Google ID token. Ensure the app SHA-1 is registered '
+        'in Google Cloud Console for this OAuth client.',
+      );
+    }
+
+    final res = await _api.post<Map<String, dynamic>>(
+      ApiEndpoints.google,
+      body: {'id_token': idToken},
+      mapData: (raw) => Map<String, dynamic>.from(raw as Map),
+    );
+    return _persistAuth(res);
   }
 
   Future<UserModel> login({
@@ -76,7 +109,8 @@ class AuthRepository {
       body: {
         'email': email,
         'password': password,
-        'portal': 'customer',
+        // Mobile app — backend skips reCAPTCHA unless portal == "customer"
+        'portal': 'mobile',
       },
       mapData: (raw) => Map<String, dynamic>.from(raw as Map),
     );
@@ -191,13 +225,11 @@ class AuthRepository {
   }
 
   Future<UserModel> _persistAuth(ApiResponse<Map<String, dynamic>> res) async {
-    if (!res.success && res.data == null) {
-      throw ApiException(res.detail ?? 'Authentication failed');
-    }
+    res.ensureSuccess('Authentication failed');
     final data = res.data ?? {};
     final access = data['access_token']?.toString();
     final refresh = data['refresh_token']?.toString() ?? '';
-    if (access == null) {
+    if (access == null || access.isEmpty) {
       throw ApiException(res.detail ?? 'No access token returned');
     }
     await _storage.saveTokens(accessToken: access, refreshToken: refresh);
@@ -207,5 +239,17 @@ class AuthRepository {
         : UserModel(id: 0, email: data['email']?.toString());
     await _storage.saveUserJson(jsonEncode(user.toJson()));
     return user;
+  }
+
+  Future<void> resendVerification(String email) async {
+    if (AppConfig.useMockData) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      return;
+    }
+    final res = await _api.post(
+      ApiEndpoints.resendVerification,
+      body: {'email': email},
+    );
+    res.ensureSuccess('Could not resend code');
   }
 }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../constants/app_routes.dart';
+import '../../core/network/api_response.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../shared/brand_widgets.dart';
@@ -28,6 +29,62 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     _email.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+
+  Future<void> _forgotPassword() async {
+    final emailCtrl = TextEditingController(text: _email.text.trim());
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset password'),
+        content: TextField(
+          controller: emailCtrl,
+          keyboardType: TextInputType.emailAddress,
+          decoration: const InputDecoration(
+            labelText: 'Email',
+            hintText: 'you@example.com',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Send code'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final email = emailCtrl.text.trim();
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter your email')),
+      );
+      return;
+    }
+    try {
+      await ref.read(accountRepositoryProvider).forgotPassword(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('If the email exists, a reset code was sent'),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    }
   }
 
   Future<void> _submit() async {
@@ -158,7 +215,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
-                    onPressed: () {},
+                    onPressed: _forgotPassword,
                     child: Text(
                       'Forgot Password?',
                       style: TextStyle(

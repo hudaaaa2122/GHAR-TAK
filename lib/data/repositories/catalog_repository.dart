@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../constants/api_endpoints.dart';
 import '../../core/config/app_config.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_response.dart';
 import '../mock/mock_data.dart';
 import '../models/models.dart';
 
@@ -189,7 +190,7 @@ class CartRepository {
     }
 
     final res = await _api.get<List<CartItemModel>>(
-      ApiEndpoints.cartList,
+      ApiEndpoints.cartMy,
       mapData: (raw) {
         if (raw is! List) return <CartItemModel>[];
         return raw
@@ -198,6 +199,7 @@ class CartRepository {
             .toList();
       },
     );
+    res.ensureSuccess('Could not load cart');
     return res.data ?? [];
   }
 
@@ -219,8 +221,14 @@ class CartRepository {
       return;
     }
 
-    await _api.post(
-      ApiEndpoints.cartCreate,
+    if (shopId <= 0) {
+      throw ApiException(
+        'This product has no shop assigned. Please try another product.',
+      );
+    }
+
+    final res = await _api.post(
+      ApiEndpoints.cartAdd,
       body: {
         'product_id': productId,
         'shop_id': shopId,
@@ -228,6 +236,7 @@ class CartRepository {
         if (variationOptionId != null) 'variation_option_id': variationOptionId,
       },
     );
+    res.ensureSuccess('Could not add to cart');
   }
 
   Future<void> updateQuantity(
@@ -244,13 +253,14 @@ class CartRepository {
       return;
     }
 
-    await _api.put(
+    final res = await _api.put(
       ApiEndpoints.cartUpdate(productId),
-      body: {'quantity': quantity},
-      query: {
+      body: {
+        'quantity': quantity,
         if (variationOptionId != null) 'variation_option_id': variationOptionId,
       },
     );
+    res.ensureSuccess('Could not update cart');
   }
 
   Future<void> remove(int productId, {int? variationOptionId}) async {
@@ -259,11 +269,23 @@ class CartRepository {
       return;
     }
 
-    await _api.delete(
-      ApiEndpoints.cartDelete(productId),
+    final res = await _api.delete(
+      ApiEndpoints.cartRemove(productId),
       body: {
         if (variationOptionId != null) 'variation_option_id': variationOptionId,
       },
     );
+    res.ensureSuccess('Could not remove item');
+  }
+
+  Future<void> clear() async {
+    if (AppConfig.useMockData) {
+      for (final item in List<CartItemModel>.from(MockData.cartItems)) {
+        MockData.cartRemove(item.product.id);
+      }
+      return;
+    }
+    final res = await _api.delete(ApiEndpoints.cartDeleteAll);
+    res.ensureSuccess('Could not clear cart');
   }
 }

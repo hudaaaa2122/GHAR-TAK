@@ -40,6 +40,7 @@ class AppRoutes {
   static const String editProfile = '/edit-profile';
   static const String addresses = '/addresses';
   static const String addressForm = '/addresses/form';
+  static const String mapPicker = '/map-picker';
   static const String wishlist = '/wishlist';
   static const String wallet = '/wallet';
   static const String notifications = '/notifications';
@@ -68,6 +69,16 @@ class AppRoutes {
   static String scanMode(String mode) =>
       Uri(path: scan, queryParameters: {'mode': mode}).toString();
 
+  /// Build `/order-success?orderId=&trackingId=`.
+  static String orderSuccessWith({String? orderId, String? trackingId}) {
+    final params = <String, String>{
+      if (orderId != null && orderId.isNotEmpty) 'orderId': orderId,
+      if (trackingId != null && trackingId.isNotEmpty) 'trackingId': trackingId,
+    };
+    if (params.isEmpty) return orderSuccess;
+    return Uri(path: orderSuccess, queryParameters: params).toString();
+  }
+
   /// Build `/edit-profile?tab=0|1|2` (Profile Info | Password | Addresses).
   static String editProfileTab(int tab) =>
       Uri(path: editProfile, queryParameters: {'tab': '$tab'}).toString();
@@ -75,12 +86,14 @@ class AppRoutes {
   /// Product list with optional query params.
   static String productsQuery({
     String? search,
+    String? barcode,
     String? endpoint,
     int? categoryId,
     int? manufacturerId,
   }) {
     final params = <String, String>{
       if (search != null && search.isNotEmpty) 'search': search,
+      if (barcode != null && barcode.isNotEmpty) 'barcode': barcode,
       if (endpoint != null && endpoint.isNotEmpty) 'endpoint': endpoint,
       if (categoryId != null) 'categoryId': '$categoryId',
       if (manufacturerId != null) 'manufacturerId': '$manufacturerId',

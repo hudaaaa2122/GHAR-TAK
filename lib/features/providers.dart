@@ -3,8 +3,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../constants/api_endpoints.dart';
 import '../core/config/app_config.dart';
 import '../data/models/models.dart';
+import '../data/repositories/account_repository.dart';
 import '../data/repositories/auth_repository.dart';
 import '../data/repositories/catalog_repository.dart';
+import '../data/repositories/order_repository.dart';
+import '../data/repositories/settings_repository.dart';
+
+export '../data/repositories/account_repository.dart'
+    show accountRepositoryProvider, AccountRepository;
+export '../data/repositories/order_repository.dart'
+    show orderRepositoryProvider, OrderRepository;
+export '../data/repositories/settings_repository.dart'
+    show settingsRepositoryProvider, SettingsRepository;
 
 final authStateProvider =
     StateNotifierProvider<AuthController, AsyncValue<UserModel?>>((ref) {
@@ -24,7 +34,6 @@ class AuthController extends StateNotifier<AsyncValue<UserModel?>> {
   }
 
   Future<void> login(String email, String password) async {
-    // Keep previous user visible — avoid full-tree loading rebuild on sign-in.
     try {
       final user = await _repo.login(email: email, password: password);
       state = AsyncValue.data(user);
@@ -34,7 +43,6 @@ class AuthController extends StateNotifier<AsyncValue<UserModel?>> {
     }
   }
 
-  /// Mock Google Sign-In — same session path as email login until backend is wired.
   Future<void> loginWithGoogle() async {
     try {
       final user = await _repo.loginWithGoogle();
@@ -57,6 +65,19 @@ class AuthController extends StateNotifier<AsyncValue<UserModel?>> {
 
 final verticalProvider = StateProvider<String>((_) => AppConfig.defaultVertical);
 
+final settingsProvider = FutureProvider<SiteSettingsModel>((ref) async {
+  return ref.watch(settingsRepositoryProvider).fetch();
+});
+
+/// Live shipping class amount from `/shipping/read/{id}` (same as website).
+final shippingClassProvider =
+    FutureProvider<ShippingClassModel?>((ref) async {
+  final settings = await ref.watch(settingsProvider.future);
+  return ref
+      .watch(settingsRepositoryProvider)
+      .fetchShippingClass(settings.shippingClassId);
+});
+
 final categoriesProvider = FutureProvider.autoDispose<List<CategoryModel>>((ref) {
   final vertical = ref.watch(verticalProvider);
   return ref.watch(catalogRepositoryProvider).listCategories(vertical: vertical);
@@ -76,17 +97,29 @@ final offersProvider = FutureProvider.autoDispose<List<ProductModel>>((ref) {
         vertical: vertical,
         endpoint: ApiEndpoints.productSales,
         limit: 12,
-      );
+      ).catchError((_) => <ProductModel>[]);
 });
 
 final bestSellersProvider =
-    FutureProvider.autoDispose<List<ProductModel>>((ref) {
+    FutureProvider.autoDispose<List<ProductModel>>((ref) async {
   final vertical = ref.watch(verticalProvider);
-  return ref.watch(catalogRepositoryProvider).listProducts(
-        vertical: vertical,
-        endpoint: ApiEndpoints.productBestSellers,
-        limit: 12,
-      );
+  final repo = ref.watch(catalogRepositoryProvider);
+  try {
+    final best = await repo.listProducts(
+      vertical: vertical,
+      endpoint: ApiEndpoints.productBestSellers,
+      limit: 12,
+    );
+    if (best.isNotEmpty) return best;
+    // Production often has no sales-order history yet — fall back to catalogue.
+    return repo.listProducts(vertical: vertical, limit: 12);
+  } catch (_) {
+    try {
+      return await repo.listProducts(vertical: vertical, limit: 12);
+    } catch (_) {
+      return <ProductModel>[];
+    }
+  }
 });
 
 final limitedStockProvider =
@@ -96,7 +129,7 @@ final limitedStockProvider =
         vertical: vertical,
         endpoint: ApiEndpoints.productLimited,
         limit: 12,
-      );
+      ).catchError((_) => <ProductModel>[]);
 });
 
 final cartProvider =
@@ -112,6 +145,11 @@ class CartController extends StateNotifier<AsyncValue<List<CartItemModel>>> {
   Future<void> refresh() async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(_repo.list);
+  }
+
+  /// Instant UI clear (badge → 0) after a successful place-order.
+  void clearLocal() {
+    state = const AsyncValue.data([]);
   }
 
   Future<void> add(ProductModel product, {int qty = 1}) async {
@@ -159,3 +197,71 @@ final productSearchProvider =
         limit: 40,
       );
 });
+
+final ordersProvider =
+    FutureProvider.autoDispose<List<OrderModel>>((ref) async {
+  ref.watch(authStateProvider);
+  return ref.watch(orderRepositoryProvider).listAllMine();
+});
+
+final returnsProvider =
+    FutureProvider.autoDispose<List<ReturnRequestModel>>((ref) async {
+  ref.watch(authStateProvider);
+  return ref.watch(orderRepositoryProvider).listMyReturns();
+});
+
+final orderDetailProvider =
+    FutureProvider.autoDispose.family<OrderModel, String>((ref, id) {
+  return ref.watch(orderRepositoryProvider).read(id);
+});
+
+final addressesProvider =
+    FutureProvider.autoDispose<List<AddressModel>>((ref) async {
+  ref.watch(authStateProvider);
+  return ref.watch(accountRepositoryProvider).listAddresses();
+});
+
+final walletProvider = FutureProvider.autoDispose<WalletModel>((ref) async {
+  ref.watch(authStateProvider);
+  return ref.watch(accountRepositoryProvider).walletBalance();
+});
+
+final walletTransactionsProvider =
+    FutureProvider.autoDispose<List<WalletTransactionModel>>((ref) async {
+  ref.watch(authStateProvider);
+  return ref.watch(accountRepositoryProvider).walletTransactions();
+});
+
+final wishlistProvider =
+    FutureProvider.autoDispose<List<ProductModel>>((ref) async {
+  ref.watch(authStateProvider);
+  return ref.watch(accountRepositoryProvider).wishlist();
+});
+
+final notificationsProvider =
+    FutureProvider.autoDispose<List<AppNotificationModel>>((ref) async {
+  ref.watch(authStateProvider);
+  return ref.watch(accountRepositoryProvider).notifications();
+});
+
+/// Holds checkout draft (address + notes + slot) between Checkout → Payment.
+final checkoutDraftProvider = StateProvider<CheckoutDraft?>((_) => null);
+
+class CheckoutDraft {
+  const CheckoutDraft({
+    required this.shippingAddress,
+    this.deliveryTime,
+    this.orderNotes,
+    this.addressTitle,
+    this.addressId,
+  });
+
+  final Map<String, dynamic> shippingAddress;
+  final String? deliveryTime;
+  final String? orderNotes;
+  final String? addressTitle;
+  final int? addressId;
+}
+
+/// Selected address id on checkout (before draft is finalized).
+final selectedCheckoutAddressIdProvider = StateProvider<int?>((_) => null);

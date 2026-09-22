@@ -25,12 +25,14 @@ final productListProvider = FutureProvider.autoDispose
 class ProductListArgs {
   const ProductListArgs({
     this.search,
+    this.barcode,
     this.endpoint,
     this.categoryId,
     this.manufacturerId,
   });
 
   final String? search;
+  final String? barcode;
   final String? endpoint;
   final int? categoryId;
   final int? manufacturerId;
@@ -39,6 +41,9 @@ class ProductListArgs {
     final filters = <List<dynamic>>[];
     if (categoryId != null) filters.add(['category.id', categoryId]);
     if (manufacturerId != null) filters.add(['manufacturer.id', manufacturerId]);
+    if (barcode != null && barcode!.trim().isNotEmpty) {
+      filters.add(['bar_code', barcode!.trim()]);
+    }
     return filters.isEmpty ? null : filters;
   }
 
@@ -46,12 +51,14 @@ class ProductListArgs {
   bool operator ==(Object other) =>
       other is ProductListArgs &&
       other.search == search &&
+      other.barcode == barcode &&
       other.endpoint == endpoint &&
       other.categoryId == categoryId &&
       other.manufacturerId == manufacturerId;
 
   @override
-  int get hashCode => Object.hash(search, endpoint, categoryId, manufacturerId);
+  int get hashCode =>
+      Object.hash(search, barcode, endpoint, categoryId, manufacturerId);
 }
 
 enum _LocalSort { relevance, priceLow, priceHigh, rating }
@@ -60,12 +67,14 @@ class ProductListScreen extends ConsumerStatefulWidget {
   const ProductListScreen({
     super.key,
     this.search,
+    this.barcode,
     this.endpoint,
     this.categoryId,
     this.manufacturerId,
   });
 
   final String? search;
+  final String? barcode;
   final String? endpoint;
   final int? categoryId;
   final int? manufacturerId;
@@ -290,17 +299,19 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     };
     final args = ProductListArgs(
       search: widget.search,
+      barcode: widget.barcode,
       endpoint: mappedEndpoint,
       categoryId: widget.categoryId,
       manufacturerId: widget.manufacturerId,
     );
     final async = ref.watch(productListProvider(args));
+    final title = widget.barcode?.isNotEmpty == true
+        ? 'Barcode'
+        : (widget.search?.isNotEmpty == true ? 'Search' : 'Products');
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          widget.search?.isNotEmpty == true ? 'Search' : 'Products',
-        ),
+        title: Text(title),
         actions: [
           IconButton(
             tooltip: 'Filter',

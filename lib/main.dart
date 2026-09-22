@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'constants/figma_assets.dart';
+import 'core/location/delivery_location.dart';
+import 'core/location/delivery_location_provider.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_mode_provider.dart';
 import 'router/app_router.dart';
@@ -73,11 +75,25 @@ Future<void> _precacheSplash() async {
   );
 }
 
-class GherTakApp extends ConsumerWidget {
+class GherTakApp extends ConsumerStatefulWidget {
   const GherTakApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<GherTakApp> createState() => _GherTakAppState();
+}
+
+class _GherTakAppState extends ConsumerState<GherTakApp> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await AppPermissions.requestStartupPermissions();
+      ref.invalidate(deliveryLocationProvider);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
     final themeMode = ref.watch(themeModeProvider);
     return MaterialApp.router(

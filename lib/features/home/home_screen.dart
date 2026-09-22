@@ -1,15 +1,20 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../constants/app_routes.dart';
+import '../../core/location/delivery_location.dart';
+import '../../core/location/delivery_location_provider.dart';
+import '../../core/network/api_response.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/vertical_theme.dart';
 import '../../data/models/models.dart';
 import '../../shared/vertical_category_bar.dart';
 import '../../shared/widgets.dart';
 import '../account/figma_screens.dart';
+import '../location/map_location_picker_screen.dart';
 import '../providers.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -22,6 +27,8 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  static bool _locationChoiceShown = false;
+
   String _greeting() {
     final h = DateTime.now().hour;
     if (h < 12) return 'Good morning';
@@ -38,13 +45,123 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ref.read(verticalProvider.notifier).state = slug;
       });
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeOfferLocationAsAddress();
+    });
+  }
+
+  Future<void> _maybeOfferLocationAsAddress() async {
+    if (_locationChoiceShown || !mounted) return;
+    final loc = await ref.read(deliveryLocationProvider.future);
+    if (!mounted || !loc.hasGps || loc.lat == null || loc.lng == null) return;
+    _locationChoiceShown = true;
+
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Delivery address',
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'We found you near ${loc.label}. Use this as your delivery address, or add a different one.',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    color: AppColors.textMuted,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, 'use'),
+                  child: const Text('Use current location'),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, 'add'),
+                  child: const Text('Add a new address'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'skip'),
+                  child: const Text('Not now'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || choice == null || choice == 'skip') return;
+
+    if (choice == 'add') {
+      context.push(AppRoutes.addresses);
+      return;
+    }
+
+    final user = ref.read(authStateProvider).valueOrNull;
+    if (user == null) {
+      showAppToast(context, 'Sign in to save a delivery address');
+      context.push(AppRoutes.login);
+      return;
+    }
+
+    try {
+      final repo = ref.read(accountRepositoryProvider);
+      final ok = await repo.isDeliverable(lat: loc.lat!, lng: loc.lng!);
+      if (!mounted) return;
+      if (!ok) {
+        showAppToast(
+          context,
+          'We don\'t deliver to your current location. Add an address in the F Markaz zone instead.',
+        );
+        context.push(AppRoutes.addresses);
+        return;
+      }
+
+      await repo.createAddress(
+        title: 'Current location',
+        type: 'shipping',
+        street: (loc.street?.trim().isNotEmpty == true)
+            ? loc.street!.trim()
+            : loc.label,
+        city: (loc.city?.trim().isNotEmpty == true)
+            ? loc.city!.trim()
+            : 'Islamabad',
+        lat: loc.lat!,
+        lng: loc.lng!,
+        isDefault: true,
+      );
+      ref.invalidate(addressesProvider);
+      if (!mounted) return;
+      showAppToast(context, 'Current location saved as delivery address',
+          isError: false);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.message);
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.toString());
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final vertical = ref.watch(verticalProvider);
     final theme = ref.watch(verticalThemeProvider);
-    final brands = ref.watch(manufacturersProvider);
+    final categories = ref.watch(categoriesProvider);
     final offers = ref.watch(offersProvider);
     final best = ref.watch(bestSellersProvider);
     final limited = ref.watch(limitedStockProvider);
@@ -83,63 +200,129 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             SliverToBoxAdapter(
               child: SizedBox(
                 height: 100,
-                child: brands.when(
-                  data: (list) => ListView.separated(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: list.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                    itemBuilder: (_, i) {
-                      final m = list[i];
-                      final url = resolveMediaUrl(m.image?.best);
-                      return InkWell(
-                        onTap: () => context.push(
-                          AppRoutes.productsQuery(manufacturerId: m.id),
-                        ),
-                        child: SizedBox(
-                          width: 68,
-                          child: Column(
-                            children: [
-                              Container(
-                                width: 60,
-                                height: 60,
-                                decoration: BoxDecoration(
-                                  color: theme.primarySoft,
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                clipBehavior: Clip.antiAlias,
-                                child: url.isEmpty
-                                    ? Center(
-                                        child: Text(
-                                          m.name.length >= 2
-                                              ? m.name.substring(0, 2).toUpperCase()
-                                              : m.name,
-                                          style: GoogleFonts.manrope(
-                                            fontWeight: FontWeight.w800,
-                                            color: theme.primary,
-                                          ),
-                                        ),
-                                      )
-                                    : Image.network(url, fit: BoxFit.cover),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                m.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.manrope(
-                                  fontSize: 11,
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                            ],
+                child: categories.when(
+                  data: (list) {
+                    // Match website: prefer child categories (images live there).
+                    // Prefer tiles that have an image so the row matches web.
+                    final tiles = <CategoryModel>[];
+                    final roots = list
+                        .where((c) => c.parentId == null)
+                        .toList();
+                    final rootsOrAll = roots.isNotEmpty ? roots : list;
+                    for (final root in rootsOrAll) {
+                      if (root.children.isNotEmpty) {
+                        tiles.addAll(root.children);
+                      } else {
+                        tiles.add(root);
+                      }
+                    }
+                    final withImages = tiles
+                        .where((c) =>
+                            (c.image?.best ?? '').trim().isNotEmpty)
+                        .toList();
+                    final pool =
+                        withImages.isNotEmpty ? withImages : tiles;
+                    final shown = (pool.isNotEmpty ? pool : list)
+                        .take(12)
+                        .toList();
+                    if (shown.isEmpty) {
+                      return Center(
+                        child: Text(
+                          'No categories for this vertical',
+                          style: GoogleFonts.manrope(
+                            color: AppColors.textMuted,
+                            fontSize: 13,
                           ),
                         ),
                       );
-                    },
+                    }
+                    return ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: shown.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 12),
+                      itemBuilder: (_, i) {
+                        final c = shown[i];
+                        final url = resolveMediaUrl(c.image?.best);
+                        return InkWell(
+                          onTap: () => context.push(
+                            AppRoutes.productsQuery(categoryId: c.id),
+                          ),
+                          child: SizedBox(
+                            width: 72,
+                            child: Column(
+                              children: [
+                                Container(
+                                  width: 60,
+                                  height: 60,
+                                  decoration: BoxDecoration(
+                                    color: theme.primarySoft,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: url.isEmpty
+                                      ? Center(
+                                          child: Text(
+                                            c.name.length >= 2
+                                                ? c.name
+                                                    .substring(0, 2)
+                                                    .toUpperCase()
+                                                : c.name,
+                                            style: GoogleFonts.manrope(
+                                              fontWeight: FontWeight.w800,
+                                              color: theme.primary,
+                                            ),
+                                          ),
+                                        )
+                                      : CachedNetworkImage(
+                                          imageUrl: url,
+                                          fit: BoxFit.cover,
+                                          width: 60,
+                                          height: 60,
+                                          errorWidget: (_, __, ___) => Center(
+                                            child: Text(
+                                              c.name.length >= 2
+                                                  ? c.name
+                                                      .substring(0, 2)
+                                                      .toUpperCase()
+                                                  : c.name,
+                                              style: GoogleFonts.manrope(
+                                                fontWeight: FontWeight.w800,
+                                                color: theme.primary,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  c.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 11,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (e, _) => Center(
+                    child: Text(
+                      e.toString(),
+                      style: GoogleFonts.manrope(
+                        color: AppColors.error,
+                        fontSize: 12,
+                      ),
+                    ),
                   ),
-                  loading: () => const Center(child: CircularProgressIndicator()),
-                  error: (e, _) => Center(child: Text('$e')),
                 ),
               ),
             ),
@@ -200,7 +383,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
-class _FigmaHomeHeader extends StatelessWidget {
+class _FigmaHomeHeader extends ConsumerWidget {
   const _FigmaHomeHeader({
     required this.greeting,
     required this.vertical,
@@ -211,11 +394,97 @@ class _FigmaHomeHeader extends StatelessWidget {
   final String vertical;
   final ValueChanged<String> onVerticalChanged;
 
+  Future<void> _openLocationOptions(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final current = ref.read(deliveryLocationProvider).valueOrNull;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Delivery location',
+                style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 17,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(Icons.my_location),
+                title: const Text('Use current GPS location'),
+                onTap: () => Navigator.pop(ctx, 'gps'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.map_outlined),
+                title: const Text('Choose on map'),
+                onTap: () => Navigator.pop(ctx, 'map'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.add_location_alt_outlined),
+                title: const Text('Add a new address'),
+                onTap: () => Navigator.pop(ctx, 'address'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!context.mounted || choice == null) return;
+
+    if (choice == 'gps') {
+      ref.read(deliveryLocationOverrideProvider.notifier).state = null;
+      ref.invalidate(deliveryLocationProvider);
+      return;
+    }
+    if (choice == 'address') {
+      context.push(AppRoutes.addresses);
+      return;
+    }
+    if (choice == 'map') {
+      final q = <String, String>{
+        if (current?.lat != null) 'lat': '${current!.lat}',
+        if (current?.lng != null) 'lng': '${current!.lng}',
+      };
+      final uri = q.isEmpty
+          ? AppRoutes.mapPicker
+          : Uri(path: AppRoutes.mapPicker, queryParameters: q).toString();
+      final result = await context.push<MapPickResult>(uri);
+      if (!context.mounted || result == null) return;
+
+      ref.read(deliveryLocationOverrideProvider.notifier).state =
+          DeliveryLocation(
+        label: result.label ??
+            '${result.lat.toStringAsFixed(3)}, ${result.lng.toStringAsFixed(3)}',
+        lat: result.lat,
+        lng: result.lng,
+        hasGps: true,
+        street: result.street,
+        city: result.city,
+      );
+      showAppToast(context, 'Delivery location updated', isError: false);
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = VerticalTheme.of(vertical);
     final w = MediaQuery.sizeOf(context).width;
     final radius = BrandHeaderShapeClipper.radiusForWidth(w);
+    final locationAsync = ref.watch(deliveryLocationProvider);
+    final locationLabel = locationAsync.when(
+      data: (loc) => loc.label,
+      loading: () => 'Locating…',
+      error: (_, __) => DeliveryLocation.fallback.label,
+    );
     return AnimatedContainer(
       duration: const Duration(milliseconds: 380),
       curve: Curves.easeOutCubic,
@@ -316,12 +585,34 @@ class _FigmaHomeHeader extends StatelessWidget {
                             children: [
                               const Icon(Icons.location_on, color: Colors.white, size: 16),
                               const SizedBox(width: 4),
-                              Text(
-                                'Gulberg III, Lahore',
-                                style: GoogleFonts.manrope(
-                                  color: Colors.white.withValues(alpha: 0.9),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () => _openLocationOptions(context, ref),
+                                  child: Text(
+                                    locationLabel,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.manrope(
+                                      color: Colors.white.withValues(alpha: 0.9),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Choose on map',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 32,
+                                  minHeight: 32,
+                                ),
+                                onPressed: () =>
+                                    _openLocationOptions(context, ref),
+                                icon: const Icon(
+                                  Icons.edit_location_alt_outlined,
+                                  color: Colors.white,
+                                  size: 18,
                                 ),
                               ),
                             ],
@@ -532,7 +823,13 @@ class _ProductRail extends ConsumerWidget {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => Padding(
               padding: const EdgeInsets.all(14),
-              child: Text('$e', style: const TextStyle(color: AppColors.error)),
+              child: Text(
+                _friendlyError(e),
+                style: GoogleFonts.manrope(
+                  color: AppColors.textMuted,
+                  fontSize: 13,
+                ),
+              ),
             ),
           ),
         ),
@@ -540,5 +837,16 @@ class _ProductRail extends ConsumerWidget {
       ],
     );
   }
+}
+
+String _friendlyError(Object e) {
+  final raw = e.toString();
+  if (raw.contains('DISTINCT ON') || raw.contains('psycopg2')) {
+    return 'Offers are temporarily unavailable. Please try again later.';
+  }
+  if (raw.length > 120) {
+    return 'Could not load products. Pull to refresh.';
+  }
+  return raw.replaceFirst('ApiException: ', '').replaceFirst('Exception: ', '');
 }
 

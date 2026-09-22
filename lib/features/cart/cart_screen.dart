@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../constants/app_routes.dart';
+import '../../core/pricing/delivery_pricing.dart';
 import '../../core/theme/app_colors.dart';
 import '../../shared/widgets.dart';
 import '../../shared/figma_chrome.dart';
@@ -262,11 +263,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                           const SizedBox(height: 14),
                           _SummaryRow(label: 'Subtotal', value: formatRs(total)),
                           const SizedBox(height: 10),
-                          _SummaryRow(
-                            label: 'Delivery fee',
-                            value: 'FREE',
-                            valueColor: AppColors.successText,
-                          ),
+                          ..._deliveryRows(ref, total),
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 12),
                             child: Divider(color: AppColors.borderLight),
@@ -282,7 +279,10 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                               ),
                               const Spacer(),
                               Text(
-                                formatRs(total),
+                                formatRs(
+                                  total +
+                                      _quote(ref, total).fee,
+                                ),
                                 style: GoogleFonts.manrope(
                                   fontWeight: FontWeight.w800,
                                   fontSize: 18,
@@ -291,6 +291,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                               ),
                             ],
                           ),
+                          ..._freeShipHint(ref, total),
                         ],
                       ),
                     ),
@@ -324,6 +325,77 @@ class _CartScreenState extends ConsumerState<CartScreen> {
         ],
       ),
     );
+  }
+
+  DeliveryQuote _quote(WidgetRef ref, double subtotal) {
+    final settings = ref.watch(settingsProvider).valueOrNull;
+    final shipping = ref.watch(shippingClassProvider).valueOrNull;
+    return quoteDelivery(
+      subtotal: subtotal,
+      settings: settings,
+      baseShippingAmount: shipping?.amount ?? 0,
+      shippingType: shipping?.type ?? 'fixed',
+    );
+  }
+
+  List<Widget> _deliveryRows(WidgetRef ref, double subtotal) {
+    final shippingAsync = ref.watch(shippingClassProvider);
+    if (shippingAsync.isLoading) {
+      return [
+        const _SummaryRow(label: 'Delivery fee', value: '…'),
+      ];
+    }
+    final q = _quote(ref, subtotal);
+    if (q.baseFee <= 0 && shippingAsync.valueOrNull == null) {
+      return [
+        const _SummaryRow(label: 'Delivery fee', value: '—'),
+      ];
+    }
+    if (q.isFree) {
+      return [
+        _SummaryRow(
+          label: 'Delivery fee',
+          value: 'FREE',
+          valueColor: AppColors.successText,
+        ),
+      ];
+    }
+    return [
+      _SummaryRow(
+        label: 'Delivery fee',
+        value: formatRs(q.fee),
+      ),
+    ];
+  }
+
+  List<Widget> _freeShipHint(WidgetRef ref, double subtotal) {
+    final q = _quote(ref, subtotal);
+    if (!q.freeShippingEnabled || q.threshold <= 0) return const [];
+    if (subtotal >= q.threshold) {
+      return [
+        const SizedBox(height: 10),
+        Text(
+          'You qualify for free delivery',
+          style: GoogleFonts.manrope(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.successText,
+          ),
+        ),
+      ];
+    }
+    final need = q.threshold - subtotal;
+    return [
+      const SizedBox(height: 10),
+      Text(
+        'Add ${formatRs(need)} more for free delivery (orders over ${formatRs(q.threshold)})',
+        style: GoogleFonts.manrope(
+          fontSize: 12,
+          color: AppColors.textMuted,
+          height: 1.35,
+        ),
+      ),
+    ];
   }
 }
 

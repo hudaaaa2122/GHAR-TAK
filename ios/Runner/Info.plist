@@ -51,6 +51,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Gher Tak needs camera access to search products by photo and scan barcodes.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Gher Tak needs microphone access for voice search.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Gher Tak uses your location to show delivery area and set your address pin.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Gher Tak needs photo library access so you can set a profile picture.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

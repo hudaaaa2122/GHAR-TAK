@@ -241,7 +241,7 @@ class InfoContent {
       category: 'Billing & Payments',
       question: 'Is there a minimum order amount?',
       answer:
-          'A small minimum may apply in some areas. Free delivery promotions often apply on orders over Rs. 1,000 where advertised.',
+          'A small minimum may apply in some areas. Free delivery applies on orders over the amount configured in store settings (currently Rs. 3,000 on production).',
     ),
     FaqItem(
       category: 'Fulfillment',

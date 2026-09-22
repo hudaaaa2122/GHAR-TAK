@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../constants/app_routes.dart';
+import '../../core/pricing/delivery_pricing.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/theme_mode_provider.dart';
@@ -105,6 +106,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   phone: user.phoneNo ?? '+92 —',
                   email: user.email ?? '',
                   initial: initial,
+                  avatarUrl: user.avatar,
                   onEditAvatar: () => context.push(AppRoutes.editProfile),
                 ),
               ),
@@ -299,12 +301,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 }
 
-class _ProfileHeader extends StatelessWidget {
+class _ProfileHeader extends ConsumerWidget {
   const _ProfileHeader({
     required this.name,
     required this.phone,
     required this.email,
     required this.initial,
+    this.avatarUrl,
     required this.onEditAvatar,
   });
 
@@ -312,10 +315,21 @@ class _ProfileHeader extends StatelessWidget {
   final String phone;
   final String email;
   final String initial;
+  final String? avatarUrl;
   final VoidCallback onEditAvatar;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ordersCount =
+        ref.watch(ordersProvider).valueOrNull?.length.toString() ?? '—';
+    final wishlistCount =
+        ref.watch(wishlistProvider).valueOrNull?.length.toString() ?? '—';
+    final wallet = ref.watch(walletProvider).valueOrNull;
+    final walletLabel = wallet == null
+        ? '—'
+        : 'Rs ${wallet.balance.toStringAsFixed(0)}';
+    final avatar = resolveMediaUrl(avatarUrl);
+
     final radius = BrandHeaderShapeClipper.radiusForWidth(
       MediaQuery.sizeOf(context).width,
     );
@@ -346,16 +360,24 @@ class _ProfileHeader extends StatelessWidget {
                             width: 3,
                           ),
                           color: Colors.white.withValues(alpha: 0.2),
+                          image: avatar.isNotEmpty
+                              ? DecorationImage(
+                                  image: NetworkImage(avatar),
+                                  fit: BoxFit.cover,
+                                )
+                              : null,
                         ),
                         alignment: Alignment.center,
-                        child: Text(
-                          initial,
-                          style: GoogleFonts.manrope(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                          ),
-                        ),
+                        child: avatar.isEmpty
+                            ? Text(
+                                initial,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : null,
                       ),
                       Positioned(
                         right: -2,
@@ -423,11 +445,11 @@ class _ProfileHeader extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    _stat('23', 'Orders'),
+                    _stat(ordersCount, 'Orders'),
                     _divider(),
-                    _stat('3', 'Saved'),
+                    _stat(wishlistCount, 'Wishlist'),
                     _divider(),
-                    _stat('Rs 2,500', 'Saved'),
+                    _stat(walletLabel, 'Wallet'),
                   ],
                 ),
               ),
@@ -762,6 +784,7 @@ class CheckoutScreen extends ConsumerStatefulWidget {
 
 class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   int _slot = 0;
+  int? _selectedAddressId;
   final Set<int> _noteChips = {};
   final _notes = TextEditingController();
 
@@ -841,34 +864,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                         ],
                       ),
                       const SizedBox(height: 14),
-                      Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: AppColors.inputFill,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Home 🏠',
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '23-B, Model Town Extension, Block B,\nLahore, Punjab — 54700',
-                              style: GoogleFonts.manrope(
-                                fontSize: 12,
-                                height: 1.45,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                      _buildAddressPicker(ref),
                       const SizedBox(height: 12),
                       OutlinedButton(
                         onPressed: () => context.push(AppRoutes.addresses),
@@ -998,11 +994,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     children: [
                       _totalRow('Items', formatRs(itemsTotal)),
                       const SizedBox(height: 10),
-                      _totalRow(
-                        'Delivery',
-                        'FREE',
-                        valueColor: AppColors.successText,
-                      ),
+                      ..._checkoutDeliveryRows(itemsTotal),
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 12),
                         child: Divider(height: 1, color: AppColors.borderLight),
@@ -1018,7 +1010,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           ),
                           const Spacer(),
                           Text(
-                            formatRs(itemsTotal),
+                            formatRs(
+                              itemsTotal + _checkoutQuote(itemsTotal).fee,
+                            ),
                             style: GoogleFonts.manrope(
                               fontWeight: FontWeight.w800,
                               fontSize: 18,
@@ -1027,13 +1021,14 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           ),
                         ],
                       ),
+                      ..._checkoutFreeShipHint(itemsTotal),
                     ],
                   ),
                 ),
                 const SizedBox(height: 20),
                 BrandGradientButton(
                   label: 'Proceed to Payments',
-                  onPressed: () => context.push(AppRoutes.payment),
+                  onPressed: () => _proceedToPayment(ref),
                 ),
               ],
             ),
@@ -1041,6 +1036,235 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         ],
       ),
     );
+  }
+
+
+  Widget _buildAddressPicker(WidgetRef ref) {
+    final addressesAsync = ref.watch(addressesProvider);
+    return addressesAsync.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      ),
+      error: (e, _) => Text(
+        e.toString(),
+        style: GoogleFonts.manrope(color: AppColors.error, fontSize: 12),
+      ),
+      data: (addresses) {
+        if (addresses.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.inputFill,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              'No saved addresses. Add one to continue.',
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          );
+        }
+        final defaults = addresses.where((a) => a.isDefault).toList();
+        final selectedId = _selectedAddressId ??
+            (defaults.isNotEmpty ? defaults.first.id : addresses.first.id);
+        if (_selectedAddressId == null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _selectedAddressId = selectedId);
+          });
+        }
+        return Column(
+          children: [
+            for (final a in addresses) ...[
+              InkWell(
+                onTap: () => setState(() => _selectedAddressId = a.id),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.inputFill,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: selectedId == a.id
+                          ? AppColors.primary
+                          : Colors.transparent,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        selectedId == a.id
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        size: 18,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              a.title,
+                              style: GoogleFonts.manrope(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              a.lineSummary.isEmpty
+                                  ? 'Incomplete address'
+                                  : a.lineSummary,
+                              style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                height: 1.45,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  DeliveryQuote _checkoutQuote(double subtotal) {
+    final settings = ref.watch(settingsProvider).valueOrNull;
+    final shipping = ref.watch(shippingClassProvider).valueOrNull;
+    return quoteDelivery(
+      subtotal: subtotal,
+      settings: settings,
+      baseShippingAmount: shipping?.amount ?? 0,
+      shippingType: shipping?.type ?? 'fixed',
+    );
+  }
+
+  List<Widget> _checkoutDeliveryRows(double subtotal) {
+    final shippingAsync = ref.watch(shippingClassProvider);
+    if (shippingAsync.isLoading) {
+      return [_totalRow('Delivery', '…')];
+    }
+    final q = _checkoutQuote(subtotal);
+    if (q.baseFee <= 0 && shippingAsync.valueOrNull == null) {
+      return [_totalRow('Delivery', '—')];
+    }
+    if (q.isFree) {
+      return [
+        _totalRow(
+          'Delivery',
+          'FREE',
+          valueColor: AppColors.successText,
+        ),
+      ];
+    }
+    return [
+      _totalRow('Delivery', formatRs(q.fee)),
+    ];
+  }
+
+  List<Widget> _checkoutFreeShipHint(double subtotal) {
+    final q = _checkoutQuote(subtotal);
+    if (!q.freeShippingEnabled || q.threshold <= 0) return const [];
+    if (subtotal >= q.threshold) {
+      return [
+        const SizedBox(height: 10),
+        Text(
+          'You qualify for free delivery',
+          style: GoogleFonts.manrope(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.successText,
+          ),
+        ),
+      ];
+    }
+    final need = q.threshold - subtotal;
+    return [
+      const SizedBox(height: 10),
+      Text(
+        'Add ${formatRs(need)} more for free delivery (orders over ${formatRs(q.threshold)})',
+        style: GoogleFonts.manrope(
+          fontSize: 12,
+          color: AppColors.textMuted,
+          height: 1.35,
+        ),
+      ),
+    ];
+  }
+
+  void _proceedToPayment(WidgetRef ref) {
+    final addresses = ref.read(addressesProvider).valueOrNull ?? [];
+    if (addresses.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please add a delivery address first')),
+      );
+      context.push(AppRoutes.addresses);
+      return;
+    }
+    final defaults = addresses.where((a) => a.isDefault).toList();
+    final id = _selectedAddressId ??
+        (defaults.isNotEmpty ? defaults.first.id : addresses.first.id);
+    final address = addresses.firstWhere((a) => a.id == id);
+    if ((address.street ?? '').isEmpty || (address.city ?? '').isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selected address is incomplete')),
+      );
+      return;
+    }
+    if (address.lat == null || address.lng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Set delivery location on the map for this address'),
+        ),
+      );
+      return;
+    }
+    final user = ref.read(authStateProvider).valueOrNull;
+    final phone = (address.phone?.isNotEmpty == true)
+        ? address.phone!
+        : (user?.phoneNo ?? '');
+    if (phone.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Add a phone number to your profile or address'),
+        ),
+      );
+      return;
+    }
+    final chipNotes = _noteChips
+        .map((i) => _chipLabels[i].$2)
+        .join('; ');
+    final notes = [
+      if (chipNotes.isNotEmpty) chipNotes,
+      if (_notes.text.trim().isNotEmpty) _notes.text.trim(),
+    ].join(' · ');
+    final slot = _slots[_slot];
+    final deliveryTime = '${slot.$1} · ${slot.$2}';
+
+    ref.read(checkoutDraftProvider.notifier).state = CheckoutDraft(
+      shippingAddress: address.toShippingPayload(
+        customerName: user?.name ?? 'Customer',
+        customerPhone: phone,
+      ),
+      deliveryTime: deliveryTime,
+      orderNotes: notes.isEmpty ? null : notes,
+      addressTitle: address.title,
+      addressId: address.id,
+    );
+    context.push(AppRoutes.payment);
   }
 
   Widget _card({required Widget child}) {

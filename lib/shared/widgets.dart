@@ -8,17 +8,46 @@ import '../core/config/app_config.dart';
 import '../core/theme/app_colors.dart';
 import '../core/theme/vertical_theme.dart';
 import '../data/models/models.dart';
+import '../features/providers.dart';
 
 export 'brand_widgets.dart';
 
 String resolveMediaUrl(String? path) {
   if (path == null || path.isEmpty) return '';
   var url = path.trim();
-  // Emulator cannot reach the host via "localhost" — map to 10.0.2.2
-  url = url
-      .replaceFirst('http://localhost', 'http://10.0.2.2')
-      .replaceFirst('http://127.0.0.1', 'http://10.0.2.2');
-  if (url.startsWith('http')) return url;
+
+  // Absolute URL: rewrite localhost media hosts to the configured API origin
+  // (matches website `resolveMediaUrl` in mediaUrl.ts).
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    try {
+      final uri = Uri.parse(url);
+      final host = uri.host.toLowerCase();
+      final isLocal = host == 'localhost' || host == '127.0.0.1';
+      if (isLocal && uri.path.startsWith('/media/')) {
+        final base = AppConfig.apiBaseUrl.replaceAll(RegExp(r'/$'), '');
+        url = '$base${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
+      } else if (isLocal) {
+        final base = AppConfig.apiBaseUrl.replaceAll(RegExp(r'/$'), '');
+        url = '$base${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
+      }
+    } catch (_) {
+      url = url
+          .replaceFirst(RegExp(r'https?://localhost(:\d+)?'), AppConfig.apiBaseUrl)
+          .replaceFirst(
+            RegExp(r'https?://127\.0\.0\.1(:\d+)?'),
+            AppConfig.apiBaseUrl,
+          );
+    }
+    // Emulator → host machine when API itself is local.
+    if (AppConfig.apiBaseUrl.contains('10.0.2.2') ||
+        AppConfig.apiBaseUrl.contains('localhost')) {
+      url = url
+          .replaceFirst('http://localhost', 'http://10.0.2.2')
+          .replaceFirst('http://127.0.0.1', 'http://10.0.2.2');
+    }
+    return url;
+  }
+
   final base = AppConfig.apiBaseUrl.replaceAll(RegExp(r'/$'), '');
   if (url.startsWith('/')) return '$base$url';
   return '$base/$url';
@@ -29,19 +58,28 @@ String formatRs(num value) {
   return f.format(value);
 }
 
-class AnnouncementBar extends StatelessWidget {
-  const AnnouncementBar({super.key, this.text = AppConfig.announcement});
+class AnnouncementBar extends ConsumerWidget {
+  const AnnouncementBar({super.key, this.text});
 
-  final String text;
+  /// Optional override; when null, uses live `/settings` free-shipping copy.
+  final String? text;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
+    final String resolved = text ??
+        settings.when(
+          data: (s) => s.freeDeliveryAnnouncement,
+          loading: () => AppConfig.announcement,
+          error: (_, __) => AppConfig.announcement,
+        );
+
     return Container(
       width: double.infinity,
       color: AppColors.primary,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Text(
-        text,
+        resolved,
         textAlign: TextAlign.center,
         style: GoogleFonts.manrope(
           color: Colors.white,

@@ -1,29 +1,39 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../constants/app_routes.dart';
 import '../../constants/app_strings.dart';
+import '../../core/location/delivery_location.dart';
+import '../../core/location/delivery_location_provider.dart';
+import '../../core/network/api_response.dart';
 import '../../core/theme/app_colors.dart';
 import '../../shared/figma_chrome.dart';
 import '../../shared/widgets.dart';
+import '../../data/models/models.dart';
+import '../../data/repositories/catalog_repository.dart';
+import '../location/map_location_picker_screen.dart';
+import '../providers.dart';
 
 // ─── Payment ─────────────────────────────────────────────────────────────────
 
-class PaymentScreen extends StatefulWidget {
+class PaymentScreen extends ConsumerStatefulWidget {
   const PaymentScreen({super.key});
 
   @override
-  State<PaymentScreen> createState() => _PaymentScreenState();
+  ConsumerState<PaymentScreen> createState() => _PaymentScreenState();
 }
 
-class _PaymentScreenState extends State<PaymentScreen> {
+class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   int _method = 0;
   bool _useWallet = false;
+  bool _placing = false;
 
   static const _methods = [
     (
@@ -31,29 +41,151 @@ class _PaymentScreenState extends State<PaymentScreen> {
       'Cash on Delivery',
       'Pay when your order arrives',
       true,
+      'cash_on_delivery',
     ),
     (
       Icons.account_balance_wallet_outlined,
       'JazzCash',
       'Mobile wallet payment',
       false,
+      'jazzcash',
     ),
     (
       Icons.credit_card_outlined,
       'PayFast',
       'Card & online banking',
       false,
+      'payfast',
     ),
     (
       Icons.upload_file_outlined,
       'Pay & Upload Receipt',
       'Bank transfer then upload proof',
       false,
+      'bank_transfer',
     ),
   ];
 
+  Future<void> _placeOrder() async {
+    if (_placing) return;
+    final draft = ref.read(checkoutDraftProvider);
+    if (draft == null || draft.shippingAddress.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a delivery address')),
+      );
+      context.go(AppRoutes.checkout);
+      return;
+    }
+
+    setState(() => _placing = true);
+    final placedAt = DateTime.now();
+    try {
+      final wallet = ref.read(walletProvider).valueOrNull;
+      final settings = ref.read(settingsProvider).valueOrNull;
+      final shipping = ref.read(shippingClassProvider).valueOrNull;
+      final order = await ref.read(orderRepositoryProvider).createFromCart(
+            shippingAddress: draft.shippingAddress,
+            paymentGateway: _methods[_method].$5,
+            deliveryTime: draft.deliveryTime,
+            orderNotes: draft.orderNotes,
+            useWallet: _useWallet,
+            walletAmount: _useWallet ? wallet?.balance : null,
+            shippingId: shipping?.id ?? settings?.shippingClassId,
+            taxId: settings?.taxClassId,
+          );
+      _goToOrderSuccess(order);
+    } on ApiException catch (e) {
+      if (e.isTimeout) {
+        final recovered = await _recoverOrderAfterSlowResponse(placedAt);
+        if (recovered != null) {
+          _goToOrderSuccess(recovered);
+          return;
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (e) {
+      // Dio timeouts sometimes surface as generic errors.
+      final recovered = await _recoverOrderAfterSlowResponse(placedAt);
+      if (recovered != null) {
+        _goToOrderSuccess(recovered);
+        return;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (mounted) setState(() => _placing = false);
+    }
+  }
+
+  void _goToOrderSuccess(OrderModel order) {
+    ref.read(checkoutDraftProvider.notifier).state = null;
+    ref.read(selectedCheckoutAddressIdProvider.notifier).state = null;
+    // Clear badge immediately — server already emptied the cart on success.
+    ref.read(cartProvider.notifier).clearLocal();
+    if (!mounted) return;
+    context.go(
+      AppRoutes.orderSuccessWith(
+        orderId: order.id,
+        trackingId: order.trackingNumber,
+      ),
+    );
+    // ignore: unawaited_futures
+    ref.read(cartProvider.notifier).refresh();
+    ref.invalidate(ordersProvider);
+    ref.invalidate(walletProvider);
+  }
+
+  /// When create-from-cart times out, the order may still have been created
+  /// (backend email/notify runs before the HTTP response). Confirm via cart + orders.
+  Future<OrderModel?> _recoverOrderAfterSlowResponse(DateTime placedAt) async {
+    try {
+      await ref.read(cartProvider.notifier).refresh();
+      final cart = ref.read(cartProvider).valueOrNull ?? [];
+      final orders = await ref.read(orderRepositoryProvider).listAllMine();
+      if (orders.isEmpty) return null;
+
+      OrderModel? newest;
+      DateTime? newestAt;
+      for (final o in orders) {
+        final raw = o.createdAt;
+        final at = raw == null ? null : DateTime.tryParse(raw)?.toLocal();
+        if (at == null) continue;
+        if (newestAt == null || at.isAfter(newestAt)) {
+          newestAt = at;
+          newest = o;
+        }
+      }
+      newest ??= orders.first;
+
+      final recent = newestAt == null ||
+          newestAt.isAfter(placedAt.subtract(const Duration(minutes: 3)));
+      // Empty cart after place-order is strong evidence the order landed.
+      if (cart.isEmpty && recent) return newest;
+      if (recent &&
+          newestAt != null &&
+          newestAt.isAfter(placedAt.subtract(const Duration(seconds: 5)))) {
+        return newest;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final walletAsync = ref.watch(walletProvider);
+    final walletLabel = walletAsync.when(
+      data: (w) => 'Available: Rs ${w.balance.toStringAsFixed(0)}',
+      loading: () => 'Loading wallet…',
+      error: (_, __) => 'Wallet unavailable',
+    );
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
@@ -204,7 +336,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       ),
                     ),
                     subtitle: Text(
-                      'Available: Rs 2,500',
+                      walletLabel,
                       style: GoogleFonts.manrope(
                         fontSize: 12,
                         color: AppColors.textMuted,
@@ -217,8 +349,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 ),
                 const SizedBox(height: 24),
                 BrandGradientButton(
-                  label: 'Place Order',
-                  onPressed: () => context.go(AppRoutes.orderSuccess),
+                  label: _placing ? 'Placing order…' : 'Place Order',
+                  onPressed: _placing ? null : _placeOrder,
                 ),
               ],
             ),
@@ -232,111 +364,126 @@ class _PaymentScreenState extends State<PaymentScreen> {
 // ─── Order Success ───────────────────────────────────────────────────────────
 
 class OrderSuccessScreen extends StatelessWidget {
-  const OrderSuccessScreen({super.key});
+  const OrderSuccessScreen({
+    super.key,
+    this.orderId,
+    this.trackingId,
+  });
+
+  final String? orderId;
+  final String? trackingId;
 
   @override
   Widget build(BuildContext context) {
+    final displayId = trackingId?.isNotEmpty == true
+        ? trackingId!
+        : (orderId ?? '—');
+
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Column(
-        children: [
-          const FigmaScreenHeader(title: 'Confirm'),
-          const CheckoutStepper(activeStep: 4),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-              children: [
-                Center(
-                  child: Container(
-                    width: 88,
-                    height: 88,
-                    decoration: const BoxDecoration(
-                      color: AppColors.successSoft,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.check_circle,
-                      size: 52,
-                      color: AppColors.success,
-                    ),
-                  ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              const Spacer(),
+              Container(
+                width: 88,
+                height: 88,
+                decoration: const BoxDecoration(
+                  color: AppColors.successSoft,
+                  shape: BoxShape.circle,
                 ),
-                const SizedBox(height: 20),
-                Text(
-                  'Order confirmed!',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 24,
-                    color: AppColors.textPrimary,
-                  ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  size: 48,
+                  color: AppColors.success,
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'Thanks for shopping with Gher Tak. We’ll notify you as your order moves.',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.manrope(
-                    fontSize: 14,
-                    height: 1.45,
-                    color: AppColors.textSecondary,
-                  ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Order Placed!',
+                style: GoogleFonts.manrope(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
                 ),
-                const SizedBox(height: 24),
-                Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        'TRACKING NUMBER',
-                        style: GoogleFonts.manrope(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 11,
-                          letterSpacing: 0.8,
-                          color: AppColors.textMuted,
-                        ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Your order has been confirmed and will be\ndelivered soon.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  color: AppColors.textMuted,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.borderLight),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      'ORDER ID',
+                      style: GoogleFonts.manrope(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                        color: AppColors.textMuted,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'GT-88421',
-                        style: GoogleFonts.manrope(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 22,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 28),
-                BrandGradientButton(
-                  label: 'View order details',
-                  onPressed: () => context.go(AppRoutes.order('GT-88421')),
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton(
-                  onPressed: () => context.go(AppRoutes.home),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    side: const BorderSide(color: AppColors.primary),
-                    minimumSize: const Size.fromHeight(52),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
                     ),
-                  ),
-                  child: Text(
-                    AppStrings.continueShopping,
-                    style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                    const SizedBox(height: 6),
+                    Text(
+                      displayId,
+                      softWrap: true,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.manrope(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              BrandGradientButton(
+                label: 'Track Order',
+                onPressed: () {
+                  if (orderId != null && orderId!.isNotEmpty) {
+                    context.go(AppRoutes.order(orderId!));
+                  } else {
+                    context.go(AppRoutes.orders);
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: () => context.go(AppRoutes.home),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 52),
+                  side: const BorderSide(color: AppColors.primary),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-              ],
-            ),
+                child: Text(
+                  'Continue Shopping',
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -344,150 +491,127 @@ class OrderSuccessScreen extends StatelessWidget {
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
 
-class OrdersScreen extends StatelessWidget {
+class OrdersScreen extends ConsumerWidget {
   const OrdersScreen({super.key});
 
-  static const _orders = [
-    _OrderCardData(
-      id: 'GT-88421',
-      date: '17 Sep 2026',
-      status: 'Out for Delivery',
-      statusColor: AppColors.warning,
-      statusBg: AppColors.warningSoft,
-      items: 4,
-      total: 4580,
-    ),
-    _OrderCardData(
-      id: 'GT-87102',
-      date: '12 Sep 2026',
-      status: 'Delivered',
-      statusColor: AppColors.successText,
-      statusBg: AppColors.successSoft,
-      items: 2,
-      total: 1890,
-    ),
-    _OrderCardData(
-      id: 'GT-86044',
-      date: '3 Sep 2026',
-      status: 'Processing',
-      statusColor: AppColors.info,
-      statusBg: AppColors.primarySoft,
-      items: 6,
-      total: 6720,
-    ),
-  ];
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ordersAsync = ref.watch(ordersProvider);
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
         children: [
           FigmaScreenHeader(
             title: 'My Orders',
-            onBack: () => context.go(AppRoutes.home),
+            onBack: () => context.pop(),
           ),
           Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              itemCount: _orders.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (_, i) {
-                final o = _orders[i];
-                return InkWell(
-                  onTap: () => context.push(AppRoutes.order(o.id)),
-                  borderRadius: BorderRadius.circular(18),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
+            child: ordersAsync.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        e is ApiException ? e.message : e.toString(),
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.manrope(color: AppColors.textMuted),
+                      ),
+                      const SizedBox(height: 12),
+                      TextButton(
+                        onPressed: () => ref.invalidate(ordersProvider),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              data: (orders) {
+                if (orders.isEmpty) {
+                  return Center(
+                    child: Text(
+                      'No orders yet',
+                      style: GoogleFonts.manrope(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textMuted,
+                      ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              o.id,
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 15,
-                              ),
-                            ),
-                            const Spacer(),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: o.statusBg,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                o.status,
-                                style: GoogleFonts.manrope(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 11,
-                                  color: o.statusColor,
+                  );
+                }
+                return RefreshIndicator(
+                  onRefresh: () async => ref.invalidate(ordersProvider),
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                    itemCount: orders.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, i) {
+                      final o = orders[i];
+                      return InkWell(
+                        onTap: () =>
+                            context.push(AppRoutes.order(o.id)),
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.borderLight),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      o.displayId,
+                                      style: GoogleFonts.manrope(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      o.status ?? 'Pending',
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 12,
+                                        color: AppColors.primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    if (o.createdAt != null) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        o.createdAt!,
+                                        style: GoogleFonts.manrope(
+                                          fontSize: 11,
+                                          color: AppColors.textMuted,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          o.date,
-                          style: GoogleFonts.manrope(
-                            fontSize: 12,
-                            color: AppColors.textMuted,
+                              Text(
+                                'Rs ${(o.total ?? 0).toStringAsFixed(0)}',
+                                style: GoogleFonts.manrope(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(
+                                Icons.chevron_right,
+                                color: AppColors.textMuted,
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Text(
-                              '${o.items} items',
-                              style: GoogleFonts.manrope(
-                                fontSize: 13,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              formatRs(o.total),
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 15,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: () =>
-                                context.push(AppRoutes.track(o.id)),
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppColors.primary,
-                              padding: EdgeInsets.zero,
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            child: Text(
-                              'Track →',
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                 );
               },
@@ -499,295 +623,19 @@ class OrdersScreen extends StatelessWidget {
   }
 }
 
-class _OrderCardData {
-  const _OrderCardData({
-    required this.id,
-    required this.date,
-    required this.status,
-    required this.statusColor,
-    required this.statusBg,
-    required this.items,
-    required this.total,
-  });
-
-  final String id;
-  final String date;
-  final String status;
-  final Color statusColor;
-  final Color statusBg;
-  final int items;
-  final num total;
-}
-
 // ─── Order Details ───────────────────────────────────────────────────────────
 
-class OrderDetailScreen extends StatelessWidget {
-  const OrderDetailScreen({super.key, required this.orderId});
-
-  final String orderId;
-
-  @override
-  Widget build(BuildContext context) {
-    final steps = [
-      ('Order placed', '17 Sep · 9:12 AM', true),
-      ('Packed', '17 Sep · 10:40 AM', true),
-      ('Out for delivery', '17 Sep · 2:05 PM', true),
-      ('Delivered', 'Expected by 4:00 PM', false),
-    ];
-
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Column(
-        children: [
-          FigmaScreenHeader(
-            title: 'Order Details',
-            onBack: () => context.pop(),
-          ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              orderId,
-                              maxLines: 1,
-                              softWrap: false,
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 16,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '17 Sep 2026',
-                              maxLines: 1,
-                              softWrap: false,
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.manrope(
-                                fontSize: 12,
-                                color: AppColors.textMuted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      OutlinedButton.icon(
-                        onPressed: () =>
-                            context.push(AppRoutes.track(orderId)),
-                        icon: const Icon(Icons.local_shipping_outlined, size: 16),
-                        label: Text(
-                          'Track',
-                          style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(color: AppColors.primary),
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _formCard(
-                  children: [
-                    Text(
-                      'ORDER TIMELINE',
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                        letterSpacing: 0.8,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    _Timeline(steps: steps),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _formCard(
-                  children: [
-                    Text(
-                      'ITEMS',
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                        letterSpacing: 0.8,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _orderItemRow('Organic Honey 500g', 2, 890),
-                    const Divider(height: 20, color: AppColors.borderLight),
-                    _orderItemRow('Fresh Milk 1L', 1, 220),
-                    const Divider(height: 20, color: AppColors.borderLight),
-                    _orderItemRow('Sourdough Loaf', 1, 350),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _formCard(
-                  children: [
-                    Text(
-                      'SUMMARY',
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                        letterSpacing: 0.8,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _summaryRow('Subtotal', formatRs(2350)),
-                    _summaryRow('Delivery', formatRs(150)),
-                    _summaryRow('Discount', '−${formatRs(120)}'),
-                    const Divider(height: 20, color: AppColors.borderLight),
-                    _summaryRow('Total', formatRs(2380), bold: true),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _formCard(
-                  children: [
-                    Text(
-                      'ADDRESSES',
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                        letterSpacing: 0.8,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Shipping',
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                    Text(
-                      '23-B, Model Town Extension, Lahore',
-                      style: GoogleFonts.manrope(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Billing',
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                    Text(
-                      'Same as shipping',
-                      style: GoogleFonts.manrope(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _orderItemRow(String name, int qty, num price) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            '$name × $qty',
-            style: GoogleFonts.manrope(
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-            ),
-          ),
-        ),
-        Text(
-          formatRs(price * qty),
-          style: GoogleFonts.manrope(
-            fontWeight: FontWeight.w800,
-            fontSize: 14,
-            color: AppColors.primary,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _summaryRow(String label, String value, {bool bold = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Text(
-            label,
-            style: GoogleFonts.manrope(
-              fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
-              fontSize: bold ? 15 : 13,
-              color: bold ? AppColors.textPrimary : AppColors.textSecondary,
-            ),
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style: GoogleFonts.manrope(
-              fontWeight: FontWeight.w800,
-              fontSize: bold ? 15 : 13,
-              color: bold ? AppColors.primary : AppColors.textPrimary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+// OrderDetailScreen moved to order_detail_screens.dart
 
 // ─── Wishlist ────────────────────────────────────────────────────────────────
 
-class WishlistScreen extends StatefulWidget {
+class WishlistScreen extends ConsumerWidget {
   const WishlistScreen({super.key});
 
   @override
-  State<WishlistScreen> createState() => _WishlistScreenState();
-}
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(wishlistProvider);
 
-class _WishlistScreenState extends State<WishlistScreen> {
-  final _items = [
-    ('Organic Honey 500g', 'GherTak GS', 890),
-    ('Fresh Milk 1L', 'Dairy Farm', 220),
-    ('Sourdough Loaf', 'Oven Fresh', 350),
-    ('Green Tea Pack', 'Tea House', 640),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
@@ -797,133 +645,156 @@ class _WishlistScreenState extends State<WishlistScreen> {
             onBack: () => context.pop(),
           ),
           Expanded(
-            child: _items.isEmpty
-                ? Center(
+            child: async.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        e is ApiException ? e.message : e.toString(),
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.manrope(color: AppColors.textMuted),
+                      ),
+                      TextButton(
+                        onPressed: () => ref.invalidate(wishlistProvider),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              data: (items) {
+                if (items.isEmpty) {
+                  return Center(
                     child: Text(
                       'Your wishlist is empty',
                       style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
                     ),
-                  )
-                : GridView.builder(
+                  );
+                }
+                return RefreshIndicator(
+                  onRefresh: () async => ref.invalidate(wishlistProvider),
+                  child: GridView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 2,
                       mainAxisSpacing: 12,
                       crossAxisSpacing: 12,
-                      childAspectRatio: 0.58,
+                      childAspectRatio: 0.72,
                     ),
-                    itemCount: _items.length,
-                    itemBuilder: (_, i) {
-                      final item = _items[i];
-                      return Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: AppColors.chipBg,
-                                  borderRadius: BorderRadius.circular(14),
+                    itemCount: items.length,
+                    itemBuilder: (context, i) {
+                      final p = items[i];
+                      return InkWell(
+                        onTap: () => context.push(AppRoutes.product('${p.id}')),
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Center(
+                                  child: Icon(
+                                    Icons.favorite,
+                                    color: AppColors.primary.withValues(alpha: 0.35),
+                                    size: 48,
+                                  ),
                                 ),
-                                child: const Icon(
-                                  Icons.image_outlined,
-                                  color: AppColors.textMuted,
-                                  size: 36,
+                              ),
+                              Text(
+                                p.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.manrope(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'by ${item.$2}',
-                              style: GoogleFonts.manrope(
-                                fontSize: 10,
-                                color: AppColors.textMuted,
+                              const SizedBox(height: 4),
+                              Text(
+                                formatRs(p.displayPrice),
+                                style: GoogleFonts.manrope(
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.primary,
+                                ),
                               ),
-                            ),
-                            Text(
-                              item.$1,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              formatRs(item.$3),
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 14,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                onPressed: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Added to cart'),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton(
+                                      onPressed: () async {
+                                        await ref
+                                            .read(cartProvider.notifier)
+                                            .add(p);
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Added to cart'),
+                                          ),
+                                        );
+                                      },
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: AppColors.primary,
+                                        side: const BorderSide(
+                                          color: AppColors.primary,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 6,
+                                        ),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      child: Text(
+                                        'Add',
+                                        style: GoogleFonts.manrope(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 11,
+                                        ),
+                                      ),
                                     ),
-                                  );
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.primary,
-                                  foregroundColor: Colors.white,
-                                  elevation: 0,
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 8),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
                                   ),
-                                ),
-                                child: Text(
-                                  'Add to cart',
-                                  style: GoogleFonts.manrope(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 11,
+                                  IconButton(
+                                    onPressed: () async {
+                                      try {
+                                        await ref
+                                            .read(accountRepositoryProvider)
+                                            .removeFromWishlist(p.id);
+                                        ref.invalidate(wishlistProvider);
+                                      } on ApiException catch (e) {
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(content: Text(e.message)),
+                                        );
+                                      }
+                                    },
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      size: 18,
+                                      color: AppColors.error,
+                                    ),
                                   ),
-                                ),
+                                ],
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton(
-                                onPressed: () =>
-                                    setState(() => _items.removeAt(i)),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: AppColors.error,
-                                  side: const BorderSide(color: AppColors.error),
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 6),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                                child: Text(
-                                  'Remove',
-                                  style: GoogleFonts.manrope(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       );
                     },
                   ),
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -933,22 +804,23 @@ class _WishlistScreenState extends State<WishlistScreen> {
 
 // ─── My Profile (tabs: Info | Password | Addresses) ──────────────────────────
 
-class EditProfileScreen extends StatefulWidget {
+class EditProfileScreen extends ConsumerStatefulWidget {
   const EditProfileScreen({super.key, this.initialTab = 0});
 
   final int initialTab;
 
   @override
-  State<EditProfileScreen> createState() => _EditProfileScreenState();
+  ConsumerState<EditProfileScreen> createState() => _EditProfileScreenState();
 }
 
-class _EditProfileScreenState extends State<EditProfileScreen>
+class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
+  bool _saving = false;
 
-  final _name = TextEditingController(text: 'Ahmed Ali');
-  final _phone = TextEditingController(text: '+92 321 4567890');
-  final _email = TextEditingController(text: 'ahmed@example.com');
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  final _email = TextEditingController();
 
   final _current = TextEditingController();
   final _next = TextEditingController();
@@ -961,20 +833,36 @@ class _EditProfileScreenState extends State<EditProfileScreen>
   final _addrLine = TextEditingController();
   final _addrCity = TextEditingController();
   final _addrPhone = TextEditingController();
-
-  final _addresses = <_SavedAddress>[
-    _SavedAddress(
-      label: 'Home',
-      line: '23-B, Model Town Extension, Block B, Lahore, Punjab — 54700',
-      isDefault: true,
-    ),
-    _SavedAddress(
-      label: 'Office',
-      line: '12-A, Gulberg III, Main Boulevard, Lahore, Punjab — 54660',
-    ),
-  ];
+  double? _mapLat;
+  double? _mapLng;
+  String? _mapLabel;
 
   String? _avatarPath;
+
+  Future<void> _pickOnMap() async {
+    final q = <String, String>{
+      if (_mapLat != null) 'lat': '${_mapLat}',
+      if (_mapLng != null) 'lng': '${_mapLng}',
+    };
+    final uri = q.isEmpty
+        ? AppRoutes.mapPicker
+        : Uri(path: AppRoutes.mapPicker, queryParameters: q).toString();
+    final result = await context.push<MapPickResult>(uri);
+    if (!mounted || result == null) return;
+    setState(() {
+      _mapLat = result.lat;
+      _mapLng = result.lng;
+      _mapLabel = result.label;
+      if ((result.street ?? '').trim().isNotEmpty &&
+          _addrLine.text.trim().isEmpty) {
+        _addrLine.text = result.street!.trim();
+      }
+      if ((result.city ?? '').trim().isNotEmpty) {
+        _addrCity.text = result.city!.trim();
+      }
+    });
+    showAppToast(context, 'Map pin set', isError: false);
+  }
 
   Future<void> _pickAvatar() async {
     final choice = await showModalBottomSheet<ImageSource>(
@@ -1041,8 +929,10 @@ class _EditProfileScreenState extends State<EditProfileScreen>
       );
       if (file == null || !mounted) return;
       setState(() => _avatarPath = file.path);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile photo updated')),
+      showAppToast(
+        context,
+        'Photo selected — tap Save Profile to upload',
+        isError: false,
       );
     } catch (e) {
       if (!mounted) return;
@@ -1060,6 +950,10 @@ class _EditProfileScreenState extends State<EditProfileScreen>
       vsync: this,
       initialIndex: widget.initialTab.clamp(0, 2),
     );
+    final user = ref.read(authStateProvider).valueOrNull;
+    _name.text = user?.name ?? '';
+    _phone.text = user?.phoneNo ?? '';
+    _email.text = user?.email ?? '';
   }
 
   @override
@@ -1123,6 +1017,154 @@ class _EditProfileScreenState extends State<EditProfileScreen>
         ],
       ),
     );
+  }
+
+
+  Future<void> _saveProfile() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      Map<String, dynamic>? uploaded;
+      if (_avatarPath != null) {
+        uploaded =
+            await ref.read(accountRepositoryProvider).uploadMedia(_avatarPath!);
+      }
+      final user = await ref.read(accountRepositoryProvider).updateProfile(
+            name: _name.text.trim(),
+            phoneNo: _phone.text.trim(),
+            image: uploaded,
+          );
+      ref.read(authStateProvider.notifier).setUser(user);
+      if (!mounted) return;
+      setState(() => _avatarPath = null);
+      showAppToast(context, 'Profile updated successfully', isError: false);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.message);
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _savePassword() async {
+    if (_saving) return;
+    if (_next.text != _confirm.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('New passwords do not match')),
+      );
+      return;
+    }
+    if (_next.text.length < 8) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password must be at least 8 characters')),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await ref.read(accountRepositoryProvider).changePassword(
+            currentPassword: _current.text,
+            newPassword: _next.text,
+            confirmPassword: _confirm.text,
+          );
+      if (!mounted) return;
+      _current.clear();
+      _next.clear();
+      _confirm.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password updated successfully')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.message);
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _saveAddress() async {
+    if (_saving) return;
+    final label = _addrLabel.text.trim();
+    final line = _addrLine.text.trim();
+    final city = _addrCity.text.trim();
+    if (label.isEmpty || line.isEmpty || city.isEmpty) {
+      showAppToast(context, 'Please fill label, address and city');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      // Prefer explicit map pin; else device GPS / fallback.
+      double? lat = _mapLat;
+      double? lng = _mapLng;
+      if (lat == null || lng == null) {
+        var loc = ref.read(deliveryLocationProvider).valueOrNull;
+        loc ??= await resolveDeliveryLocation();
+        if (!mounted) return;
+        lat = loc.lat;
+        lng = loc.lng;
+        if (lat == null || lng == null) {
+          showAppToast(
+            context,
+            'Pick a location on the map or enable GPS',
+          );
+          return;
+        }
+        if (!loc.hasGps && _mapLat == null) {
+          showAppToast(
+            context,
+            'Using default pin. Prefer “Pick on map” for accuracy.',
+            isError: false,
+          );
+        }
+      }
+
+      final repo = ref.read(accountRepositoryProvider);
+      final ok = await repo.isDeliverable(lat: lat, lng: lng);
+      if (!mounted) return;
+      if (!ok) {
+        showAppToast(
+          context,
+          'We don\'t deliver here. Move the pin into the Islamabad F Markaz zone.',
+        );
+        return;
+      }
+
+      await repo.createAddress(
+        title: label,
+        type: 'shipping',
+        street: line,
+        city: city,
+        lat: lat,
+        lng: lng,
+        isDefault: false,
+      );
+      ref.invalidate(addressesProvider);
+      if (!mounted) return;
+      _addrLabel.clear();
+      _addrLine.clear();
+      _addrCity.clear();
+      _addrPhone.clear();
+      setState(() {
+        _mapLat = null;
+        _mapLng = null;
+        _mapLabel = null;
+      });
+      showAppToast(context, 'Address saved', isError: false);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.message);
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Widget _buildProfileInfo() {
@@ -1244,12 +1286,8 @@ class _EditProfileScreenState extends State<EditProfileScreen>
         ),
         const SizedBox(height: 20),
         BrandGradientButton(
-          label: 'Update Profile',
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Profile updated')),
-            );
-          },
+          label: _saving ? 'Saving…' : 'Update Profile',
+          onPressed: _saving ? null : _saveProfile,
         ),
       ],
     );
@@ -1344,12 +1382,8 @@ class _EditProfileScreenState extends State<EditProfileScreen>
         ),
         const SizedBox(height: 20),
         BrandGradientButton(
-          label: 'Update Password',
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Password updated')),
-            );
-          },
+          label: _saving ? 'Updating…' : 'Update Password',
+          onPressed: _saving ? null : _savePassword,
         ),
       ],
     );
@@ -1385,7 +1419,7 @@ class _EditProfileScreenState extends State<EditProfileScreen>
             _fieldLabel('City'),
             TextField(
               controller: _addrCity,
-              decoration: const InputDecoration(hintText: 'Lahore'),
+              decoration: const InputDecoration(hintText: 'Islamabad'),
             ),
             const SizedBox(height: 12),
             _fieldLabel('Phone'),
@@ -1393,28 +1427,40 @@ class _EditProfileScreenState extends State<EditProfileScreen>
               controller: _addrPhone,
               keyboardType: TextInputType.phone,
             ),
+            const SizedBox(height: 12),
+            _fieldLabel('Delivery pin'),
+            OutlinedButton.icon(
+              onPressed: _saving ? null : _pickOnMap,
+              icon: const Icon(Icons.map_outlined, size: 18),
+              label: Text(
+                _mapLat != null
+                    ? (_mapLabel ?? 'Pin set — tap to change')
+                    : 'Pick location on map',
+                style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: const BorderSide(color: AppColors.primary),
+                minimumSize: const Size.fromHeight(46),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            if (_mapLat != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                '${_mapLat!.toStringAsFixed(5)}, ${_mapLng!.toStringAsFixed(5)}',
+                style: GoogleFonts.manrope(
+                  fontSize: 11,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             BrandGradientButton(
-              label: 'Save Address',
-              onPressed: () {
-                if (_addrLabel.text.trim().isEmpty ||
-                    _addrLine.text.trim().isEmpty) {
-                  return;
-                }
-                setState(() {
-                  _addresses.add(
-                    _SavedAddress(
-                      label: _addrLabel.text.trim(),
-                      line:
-                          '${_addrLine.text.trim()}${_addrCity.text.isEmpty ? '' : ', ${_addrCity.text.trim()}'}',
-                    ),
-                  );
-                  _addrLabel.clear();
-                  _addrLine.clear();
-                  _addrCity.clear();
-                  _addrPhone.clear();
-                });
-              },
+              label: _saving ? 'Saving…' : 'Save Address',
+              onPressed: _saving ? null : _saveAddress,
             ),
           ],
         ),
@@ -1427,15 +1473,47 @@ class _EditProfileScreenState extends State<EditProfileScreen>
           ),
         ),
         const SizedBox(height: 12),
-        for (var i = 0; i < _addresses.length; i++) ...[
-          if (i > 0) const SizedBox(height: 10),
-          _addressCard(i, _addresses[i]),
-        ],
+        ..._buildSavedAddressCards(ref),
       ],
     );
   }
 
-  Widget _addressCard(int index, _SavedAddress a) {
+
+  List<Widget> _buildSavedAddressCards(WidgetRef ref) {
+    final async = ref.watch(addressesProvider);
+    return async.when(
+      loading: () => const [
+        Padding(
+          padding: EdgeInsets.all(24),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ],
+      error: (e, _) => [
+        Text(
+          e is ApiException ? e.message : e.toString(),
+          style: GoogleFonts.manrope(color: AppColors.error),
+        ),
+      ],
+      data: (addresses) {
+        if (addresses.isEmpty) {
+          return [
+            Text(
+              'No saved addresses yet',
+              style: GoogleFonts.manrope(color: AppColors.textMuted),
+            ),
+          ];
+        }
+        final widgets = <Widget>[];
+        for (var i = 0; i < addresses.length; i++) {
+          if (i > 0) widgets.add(const SizedBox(height: 10));
+          widgets.add(_apiAddressCard(addresses[i]));
+        }
+        return widgets;
+      },
+    );
+  }
+
+  Widget _apiAddressCard(AddressModel a) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1454,7 +1532,7 @@ class _EditProfileScreenState extends State<EditProfileScreen>
           Row(
             children: [
               Text(
-                a.label,
+                a.title,
                 style: GoogleFonts.manrope(
                   fontWeight: FontWeight.w800,
                   fontSize: 15,
@@ -1483,7 +1561,7 @@ class _EditProfileScreenState extends State<EditProfileScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            a.line,
+            a.lineSummary.isEmpty ? 'No street details' : a.lineSummary,
             style: GoogleFonts.manrope(
               fontSize: 13,
               height: 1.45,
@@ -1491,63 +1569,35 @@ class _EditProfileScreenState extends State<EditProfileScreen>
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              if (!a.isDefault)
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      for (final x in _addresses) {
-                        x.isDefault = false;
-                      }
-                      _addresses[index].isDefault = true;
-                    });
-                  },
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(
-                    'Set as default',
-                    style: GoogleFonts.manrope(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              const Spacer(),
-              IconButton(
-                onPressed: () {},
-                icon: const Icon(Icons.edit_outlined, size: 20),
-                color: AppColors.textSecondary,
-                visualDensity: VisualDensity.compact,
-              ),
-              IconButton(
-                onPressed: () => setState(() => _addresses.removeAt(index)),
-                icon: const Icon(Icons.delete_outline, size: 20),
-                color: AppColors.error,
-                visualDensity: VisualDensity.compact,
-              ),
-            ],
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              onPressed: () async {
+                try {
+                  await ref
+                      .read(accountRepositoryProvider)
+                      .deleteAddress(a.id);
+                  ref.invalidate(addressesProvider);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Address deleted')),
+                  );
+                } on ApiException catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(e.message)),
+                  );
+                }
+              },
+              icon: const Icon(Icons.delete_outline, size: 20),
+              color: AppColors.error,
+              visualDensity: VisualDensity.compact,
+            ),
           ),
         ],
       ),
     );
   }
-}
-
-class _SavedAddress {
-  _SavedAddress({
-    required this.label,
-    required this.line,
-    this.isDefault = false,
-  });
-
-  final String label;
-  final String line;
-  bool isDefault;
 }
 
 /// Kept for route compatibility — opens My Profile → Change Password tab.
@@ -1572,19 +1622,18 @@ class AddressesScreen extends StatelessWidget {
 
 // ─── Wallet ──────────────────────────────────────────────────────────────────
 
-class WalletScreen extends StatelessWidget {
+class WalletScreen extends ConsumerWidget {
   const WalletScreen({super.key});
 
-  static const _txns = [
-    (true, 'Cashback reward', '18 Sep 2026', 150),
-    (false, 'Order GT-87102', '12 Sep 2026', 200),
-    (true, 'Promo credit', '5 Sep 2026', 500),
-    (false, 'Order GT-86044', '3 Sep 2026', 350),
-    (true, 'Referral bonus', '1 Sep 2026', 100),
-  ];
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final walletAsync = ref.watch(walletProvider);
+    final txnsAsync = ref.watch(walletTransactionsProvider);
+    final wallet = walletAsync.valueOrNull;
+    final balance = wallet?.balance ?? 0;
+    final credited = wallet?.totalCredited ?? 0;
+    final debited = wallet?.totalDebited ?? 0;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
@@ -1615,7 +1664,9 @@ class WalletScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Rs 2,500',
+                        walletAsync.isLoading
+                            ? '…'
+                            : 'Rs ${balance.toStringAsFixed(0)}',
                         style: GoogleFonts.manrope(
                           fontWeight: FontWeight.w800,
                           fontSize: 32,
@@ -1626,7 +1677,10 @@ class WalletScreen extends StatelessWidget {
                       Row(
                         children: [
                           Expanded(
-                            child: _walletStat('Total Credited', 'Rs 3,400'),
+                            child: _walletStat(
+                              'Total Credited',
+                              'Rs ${credited.toStringAsFixed(0)}',
+                            ),
                           ),
                           Container(
                             width: 1,
@@ -1634,7 +1688,10 @@ class WalletScreen extends StatelessWidget {
                             color: Colors.white.withValues(alpha: 0.25),
                           ),
                           Expanded(
-                            child: _walletStat('Total Debited', 'Rs 900'),
+                            child: _walletStat(
+                              'Total Debited',
+                              'Rs ${debited.toStringAsFixed(0)}',
+                            ),
                           ),
                         ],
                       ),
@@ -1650,71 +1707,100 @@ class WalletScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                for (final t in _txns) ...[
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
+                ...txnsAsync.when(
+                  loading: () => [
+                    const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Center(child: CircularProgressIndicator()),
                     ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: t.$1
-                                ? AppColors.successSoft
-                                : AppColors.errorSoft,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(
-                            t.$1
-                                ? Icons.arrow_downward
-                                : Icons.arrow_upward,
-                            size: 18,
-                            color: t.$1
-                                ? AppColors.successText
-                                : AppColors.error,
+                  ],
+                  error: (e, _) => [
+                    Text(
+                      e is ApiException ? e.message : e.toString(),
+                      style: GoogleFonts.manrope(color: AppColors.error),
+                    ),
+                  ],
+                  data: (txns) {
+                    if (txns.isEmpty) {
+                      return [
+                        Text(
+                          'No transactions yet',
+                          style: GoogleFonts.manrope(
+                            color: AppColors.textMuted,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                      ];
+                    }
+                    return [
+                      for (final t in txns)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
                             children: [
-                              Text(
-                                t.$2,
-                                style: GoogleFonts.manrope(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 14,
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: t.isCredit
+                                      ? AppColors.successSoft
+                                      : AppColors.errorSoft,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  t.isCredit
+                                      ? Icons.arrow_downward
+                                      : Icons.arrow_upward,
+                                  size: 18,
+                                  color: t.isCredit
+                                      ? AppColors.successText
+                                      : AppColors.error,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      t.title,
+                                      style: GoogleFonts.manrope(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${t.isCredit ? 'Credit' : 'Debit'}'
+                                      '${t.dateLabel.isEmpty ? '' : ' · ${t.dateLabel}'}',
+                                      style: GoogleFonts.manrope(
+                                        fontSize: 12,
+                                        color: AppColors.textMuted,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               Text(
-                                '${t.$1 ? 'Credit' : 'Debit'} · ${t.$3}',
+                                '${t.isCredit ? '+' : '−'}${formatRs(t.amount.abs())}',
                                 style: GoogleFonts.manrope(
-                                  fontSize: 12,
-                                  color: AppColors.textMuted,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14,
+                                  color: t.isCredit
+                                      ? AppColors.successText
+                                      : AppColors.textPrimary,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        Text(
-                          '${t.$1 ? '+' : '−'}${formatRs(t.$4)}',
-                          style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                            color: t.$1
-                                ? AppColors.successText
-                                : AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                    ];
+                  },
+                ),
               ],
             ),
           ),
@@ -1753,50 +1839,13 @@ class WalletScreen extends StatelessWidget {
 
 // ─── Notifications ───────────────────────────────────────────────────────────
 
-class NotificationsScreen extends StatelessWidget {
+class NotificationsScreen extends ConsumerWidget {
   const NotificationsScreen({super.key});
 
-  static const _items = [
-    (
-      'N-1042',
-      '18 Sep 2026',
-      'Order out for delivery',
-      'GT-88421 is on the way to your address.',
-      'Orders',
-      'Unread',
-      true,
-    ),
-    (
-      'N-1038',
-      '17 Sep 2026',
-      'Deal alert',
-      '20% off bakery items today only.',
-      'Promos',
-      'Read',
-      false,
-    ),
-    (
-      'N-1021',
-      '16 Sep 2026',
-      'Wallet credited',
-      'Rs 150 cashback added to your wallet.',
-      'Wallet',
-      'Unread',
-      true,
-    ),
-    (
-      'N-1005',
-      '12 Sep 2026',
-      'Order delivered',
-      'GT-87102 was delivered successfully.',
-      'Orders',
-      'Read',
-      false,
-    ),
-  ];
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(notificationsProvider);
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
@@ -1806,440 +1855,92 @@ class NotificationsScreen extends StatelessWidget {
             onBack: () => context.pop(),
           ),
           Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              itemCount: _items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (_, i) {
-                final n = _items[i];
-                final unread = n.$7;
-                return Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Container(
-                          width: 4,
-                          color: unread
-                              ? AppColors.info
-                              : Colors.transparent,
-                        ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      n.$1,
-                                      style: GoogleFonts.manrope(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 12,
-                                        color: AppColors.textMuted,
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    Text(
-                                      n.$2,
-                                      style: GoogleFonts.manrope(
-                                        fontSize: 11,
-                                        color: AppColors.textMuted,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  n.$3,
-                                  style: GoogleFonts.manrope(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  n.$4,
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 13,
-                                    color: AppColors.textSecondary,
-                                    height: 1.4,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  children: [
-                                    _pill(n.$5, AppColors.primarySoft,
-                                        AppColors.primary),
-                                    const SizedBox(width: 8),
-                                    _pill(
-                                      n.$6,
-                                      unread
-                                          ? AppColors.primarySoft
-                                          : AppColors.chipBg,
-                                      unread
-                                          ? AppColors.info
-                                          : AppColors.textMuted,
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _pill(String text, Color bg, Color fg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        text,
-        style: GoogleFonts.manrope(
-          fontWeight: FontWeight.w700,
-          fontSize: 11,
-          color: fg,
-        ),
-      ),
-    );
-  }
-}
-
-// ─── Returns ─────────────────────────────────────────────────────────────────
-
-class ReturnsScreen extends StatelessWidget {
-  const ReturnsScreen({super.key});
-
-  static const _items = [
-    (
-      'GT-87102',
-      '14 Sep 2026',
-      'Full refund',
-      1890,
-      'Completed',
-      AppColors.successText,
-      AppColors.successSoft,
-    ),
-    (
-      'GT-86044',
-      '8 Sep 2026',
-      'Partial refund',
-      450,
-      'Processed',
-      AppColors.info,
-      AppColors.primarySoft,
-    ),
-    (
-      'GT-85210',
-      '1 Sep 2026',
-      'Exchange',
-      0,
-      'Rejected',
-      AppColors.error,
-      AppColors.errorSoft,
-    ),
-    (
-      'GT-84888',
-      '28 Aug 2026',
-      'Full refund',
-      920,
-      'Pending',
-      AppColors.warning,
-      AppColors.warningSoft,
-    ),
-    (
-      'GT-84102',
-      '20 Aug 2026',
-      'Partial refund',
-      300,
-      'Approved',
-      AppColors.primary,
-      AppColors.primarySoft,
-    ),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Column(
-        children: [
-          FigmaScreenHeader(
-            title: AppStrings.returns,
-            onBack: () => context.pop(),
-          ),
-          Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              itemCount: _items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (_, i) {
-                final r = _items[i];
-                return Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
-                            r.$1,
-                            style: GoogleFonts.manrope(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                            ),
-                          ),
-                          const Spacer(),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: r.$7,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              r.$5,
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 11,
-                                color: r.$6,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        r.$2,
-                        style: GoogleFonts.manrope(
-                          fontSize: 12,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Text(
-                            r.$3,
-                            style: GoogleFonts.manrope(
-                              fontSize: 13,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                          const Spacer(),
-                          Text(
-                            r.$4 > 0 ? formatRs(r.$4) : '—',
-                            style: GoogleFonts.manrope(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Track Order ─────────────────────────────────────────────────────────────
-
-class TrackOrderScreen extends StatefulWidget {
-  const TrackOrderScreen({super.key, required this.orderId});
-
-  final String orderId;
-
-  @override
-  State<TrackOrderScreen> createState() => _TrackOrderScreenState();
-}
-
-class _TrackOrderScreenState extends State<TrackOrderScreen> {
-  late final TextEditingController _tracking;
-  bool _tracked = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _tracking = TextEditingController(text: widget.orderId);
-    _tracked = widget.orderId.isNotEmpty;
-  }
-
-  @override
-  void dispose() {
-    _tracking.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final steps = [
-      ('Order placed', '17 Sep · 9:12 AM', true),
-      ('Packed', '17 Sep · 10:40 AM', true),
-      ('Out for delivery', '17 Sep · 2:05 PM', true),
-      ('Delivered', 'Expected by 4:00 PM', false),
-    ];
-
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Column(
-        children: [
-          FigmaScreenHeader(
-            title: 'Track Your Order',
-            onBack: () => context.pop(),
-          ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              children: [
-                _formCard(
+            child: async.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    _fieldLabel('Tracking Number'),
-                    TextField(
-                      controller: _tracking,
-                      decoration: const InputDecoration(
-                        hintText: 'e.g. GT-88421',
-                      ),
+                    Text(
+                      e is ApiException ? e.message : e.toString(),
+                      textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 16),
-                    BrandGradientButton(
-                      label: 'Track Order',
-                      onPressed: () {
-                        setState(() => _tracked = true);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Center(
-                      child: TextButton(
-                        onPressed: () => context.push(AppRoutes.contact),
-                        child: Text(
-                          'Contact support',
-                          style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
+                    TextButton(
+                      onPressed: () => ref.invalidate(notificationsProvider),
+                      child: const Text('Retry'),
                     ),
                   ],
                 ),
-                if (_tracked) ...[
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: AppColors.successSoft,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.check_circle,
-                          color: AppColors.successText,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Tracking found for ${_tracking.text.trim().isEmpty ? 'GT-88421' : _tracking.text.trim()}',
-                            style: GoogleFonts.manrope(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                              color: AppColors.successText,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: Row(
-                      children: [
-                        Text(
-                          _tracking.text.trim().isEmpty
-                              ? 'GT-88421'
-                              : _tracking.text.trim(),
-                          style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.warningSoft,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            'Out for Delivery',
-                            style: GoogleFonts.manrope(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 11,
-                              color: AppColors.warning,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _formCard(
-                    children: [
-                      Text(
-                        'ORDER TIMELINE',
-                        style: GoogleFonts.manrope(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 11,
-                          letterSpacing: 0.8,
-                          color: AppColors.textMuted,
-                        ),
+              ),
+              data: (items) {
+                if (items.isEmpty) {
+                  return Center(
+                    child: Text(
+                      'No notifications',
+                      style: GoogleFonts.manrope(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textMuted,
                       ),
-                      const SizedBox(height: 14),
-                      _Timeline(steps: steps),
-                    ],
+                    ),
+                  );
+                }
+                return RefreshIndicator(
+                  onRefresh: () async =>
+                      ref.invalidate(notificationsProvider),
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, i) {
+                      final n = items[i];
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: n.isRead
+                              ? null
+                              : Border.all(
+                                  color: AppColors.primary.withValues(alpha: 0.3),
+                                ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              n.title,
+                              style: GoogleFonts.manrope(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (n.body != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                n.body!,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 13,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                            if (n.createdAt != null) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                n.createdAt!,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 11,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                ],
-              ],
+                );
+              },
             ),
           ),
         ],
@@ -2248,78 +1949,9 @@ class _TrackOrderScreenState extends State<TrackOrderScreen> {
   }
 }
 
-class _Timeline extends StatelessWidget {
-  const _Timeline({required this.steps});
+// ReturnsScreen moved to order_detail_screens.dart
 
-  final List<(String, String, bool)> steps;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        for (var i = 0; i < steps.length; i++)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                children: [
-                  Container(
-                    width: 22,
-                    height: 22,
-                    decoration: BoxDecoration(
-                      color: steps[i].$3
-                          ? AppColors.success
-                          : AppColors.border,
-                      shape: BoxShape.circle,
-                    ),
-                    child: steps[i].$3
-                        ? const Icon(Icons.check, size: 12, color: Colors.white)
-                        : null,
-                  ),
-                  if (i < steps.length - 1)
-                    Container(
-                      width: 2,
-                      height: 36,
-                      color: steps[i].$3
-                          ? AppColors.success
-                          : AppColors.border,
-                    ),
-                ],
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        steps[i].$1,
-                        style: GoogleFonts.manrope(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                          color: steps[i].$3
-                              ? AppColors.textPrimary
-                              : AppColors.textMuted,
-                        ),
-                      ),
-                      Text(
-                        steps[i].$2,
-                        style: GoogleFonts.manrope(
-                          fontSize: 12,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-      ],
-    );
-  }
-}
+// TrackOrderScreen moved to order_detail_screens.dart
 
 // ─── Seller ──────────────────────────────────────────────────────────────────
 
@@ -2521,7 +2153,7 @@ class _SellerScreenState extends State<SellerScreen> {
                               TextField(
                                 controller: _city,
                                 decoration:
-                                    const InputDecoration(hintText: 'Lahore'),
+                                    const InputDecoration(hintText: 'Islamabad'),
                               ),
                             ],
                           ),
@@ -2573,60 +2205,135 @@ class _SellerScreenState extends State<SellerScreen> {
 
 // ─── Scan (camera / QR modes) ────────────────────────────────────────────────
 
-class ScanScreen extends StatefulWidget {
+class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({super.key, this.mode = 'qr'});
 
   /// `camera` | `qr`
   final String mode;
 
   @override
-  State<ScanScreen> createState() => _ScanScreenState();
+  ConsumerState<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends State<ScanScreen> {
+class _ScanScreenState extends ConsumerState<ScanScreen> {
   bool _busy = false;
   String? _previewPath;
   bool _awaitingConfirm = false;
   bool _handledBarcode = false;
   MobileScannerController? _scanner;
+  MobileScannerController? _imageAnalyzer;
 
   bool get _isCamera => widget.mode == 'camera';
 
   @override
   void initState() {
     super.initState();
-    if (!_isCamera) {
-      _scanner = MobileScannerController(
-        detectionSpeed: DetectionSpeed.normal,
-        facing: CameraFacing.back,
-        formats: const [
-          BarcodeFormat.ean13,
-          BarcodeFormat.ean8,
-          BarcodeFormat.upcA,
-          BarcodeFormat.upcE,
-          BarcodeFormat.code128,
-          BarcodeFormat.code39,
-          BarcodeFormat.qrCode,
-        ],
-      );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _prepareCamera());
+  }
+
+  Future<void> _prepareCamera() async {
+    final ok = await AppPermissions.ensureCamera();
+    if (!mounted) return;
+    if (!ok) {
+      showAppToast(context, 'Camera permission is required to scan.');
+      if (!_isCamera) {
+        await _fallbackManualBarcode();
+      }
+      return;
+    }
+    if (_isCamera) return;
+    final controller = MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+      // Empty = all formats (EAN, UPC, Code128, QR, …)
+      formats: const [],
+    );
+    setState(() => _scanner = controller);
+    try {
+      await controller.start();
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, 'Could not start camera: $e');
     }
   }
 
   @override
   void dispose() {
     _scanner?.dispose();
+    _imageAnalyzer?.dispose();
     super.dispose();
+  }
+
+  Future<void> _openBarcodeResult(String code) async {
+    final cleaned = code.trim();
+    if (cleaned.isEmpty) return;
+
+    setState(() => _busy = true);
+    try {
+      final products = await ref.read(catalogRepositoryProvider).listProducts(
+            vertical: ref.read(verticalProvider),
+            columnFilters: [
+              ['bar_code', cleaned],
+            ],
+            limit: 20,
+          );
+
+      if (!mounted) return;
+
+      if (products.length == 1) {
+        final p = products.first;
+        final id = p.slug?.isNotEmpty == true ? p.slug! : '${p.id}';
+        context.pushReplacement(AppRoutes.product(id));
+        return;
+      }
+
+      if (products.isEmpty) {
+        // Fallback: name/sku search once production list includes those fields.
+        context.pushReplacement(
+          AppRoutes.productsQuery(search: cleaned, barcode: cleaned),
+        );
+        showAppToast(
+          context,
+          'No exact barcode match. Searching catalog…',
+          isError: false,
+        );
+        return;
+      }
+
+      context.pushReplacement(AppRoutes.productsQuery(barcode: cleaned));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.message);
+      setState(() {
+        _busy = false;
+        _handledBarcode = false;
+      });
+      await _scanner?.start();
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.toString());
+      setState(() {
+        _busy = false;
+        _handledBarcode = false;
+      });
+      await _scanner?.start();
+    }
   }
 
   Future<void> _capturePhoto() async {
     if (_busy) return;
+    final ok = await AppPermissions.ensureCamera();
+    if (!ok) {
+      if (mounted) showAppToast(context, 'Camera permission is required.');
+      return;
+    }
     setState(() => _busy = true);
     try {
       final picker = ImagePicker();
       final shot = await picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 70,
-        maxWidth: 1280,
+        imageQuality: 85,
+        maxWidth: 1600,
       );
       if (shot == null) {
         if (mounted) setState(() => _busy = false);
@@ -2641,25 +2348,89 @@ class _ScanScreenState extends State<ScanScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Camera unavailable: $e')),
-      );
+      showAppToast(context, 'Camera unavailable: $e');
       setState(() => _busy = false);
-      _goVisualSearch();
     }
   }
 
-  void _goVisualSearch() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Visual search: using your photo when backend is ready. Showing matching products for now.',
+  Future<void> _searchWithPhoto() async {
+    if (_busy) return;
+    final path = _previewPath;
+    if (path == null) {
+      showAppToast(context, 'Take a photo first');
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      _imageAnalyzer ??= MobileScannerController(autoStart: false);
+      final capture = await _imageAnalyzer!.analyzeImage(path);
+      final code = capture?.barcodes
+          .map((b) => b.rawValue)
+          .whereType<String>()
+          .map((s) => s.trim())
+          .firstWhere((s) => s.isNotEmpty, orElse: () => '');
+
+      if (!mounted) return;
+
+      if (code != null && code.isNotEmpty) {
+        showAppToast(
+          context,
+          'Barcode found on photo',
+          isError: false,
+        );
+        await _openBarcodeResult(code);
+        return;
+      }
+
+      // No barcode on packaging — ask for a product name / keyword.
+      setState(() => _busy = false);
+      final query = await _askProductName(
+        title: 'No barcode on this photo',
+        hint: 'Type the product name you see on the label',
+      );
+      if (!mounted) return;
+      if (query == null || query.isEmpty) return;
+      context.pushReplacement(AppRoutes.productsQuery(search: query));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      final query = await _askProductName(
+        title: 'Search by name',
+        hint: 'Could not read barcode — enter product name',
+      );
+      if (!mounted) return;
+      if (query == null || query.isEmpty) return;
+      context.pushReplacement(AppRoutes.productsQuery(search: query));
+    }
+  }
+
+  Future<String?> _askProductName({
+    required String title,
+    required String hint,
+  }) async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(hintText: hint),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
         ),
-        duration: Duration(seconds: 3),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Search'),
+          ),
+        ],
       ),
-    );
-    context.pushReplacement(
-      AppRoutes.productsQuery(search: 'milk'),
     );
   }
 
@@ -2672,21 +2443,24 @@ class _ScanScreenState extends State<ScanScreen> {
         .firstWhere((s) => s.isNotEmpty, orElse: () => '');
     if (raw.isEmpty) return;
     _handledBarcode = true;
-    setState(() => _busy = true);
     _scanner?.stop();
-    final query = raw.length > 32 ? raw.substring(0, 32) : raw;
-    context.pushReplacement(AppRoutes.productsQuery(search: query));
+    _openBarcodeResult(raw);
   }
 
   Future<void> _fallbackManualBarcode() async {
     if (_busy) return;
-    setState(() => _busy = true);
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Scanner unavailable — showing sample results')),
+    final query = await _askProductName(
+      title: 'Search products',
+      hint: 'Enter barcode or product name',
     );
-    context.pushReplacement(AppRoutes.productsQuery(search: 'rice'));
+    if (!mounted || query == null || query.isEmpty) return;
+
+    final digitsOnly = RegExp(r'^\d{8,14}$').hasMatch(query);
+    if (digitsOnly) {
+      await _openBarcodeResult(query);
+    } else {
+      context.pushReplacement(AppRoutes.productsQuery(search: query));
+    }
   }
 
   @override
@@ -2715,7 +2489,17 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 48),
+                  if (!_isCamera)
+                    IconButton(
+                      tooltip: 'Torch',
+                      onPressed: () => _scanner?.toggleTorch(),
+                      icon: const Icon(
+                        Icons.flashlight_on_outlined,
+                        color: Colors.white,
+                      ),
+                    )
+                  else
+                    const SizedBox(width: 48),
                 ],
               ),
             ),
@@ -2743,7 +2527,7 @@ class _ScanScreenState extends State<ScanScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton(
-                              onPressed: _busy ? null : _goVisualSearch,
+                              onPressed: _busy ? null : _searchWithPhoto,
                               style: FilledButton.styleFrom(
                                 backgroundColor: AppColors.primary,
                                 minimumSize: const Size.fromHeight(48),
@@ -2752,7 +2536,9 @@ class _ScanScreenState extends State<ScanScreen> {
                                 ),
                               ),
                               child: Text(
-                                'Search with this photo',
+                                _busy
+                                    ? 'Looking for barcode…'
+                                    : 'Search with this photo',
                                 style: GoogleFonts.manrope(
                                   fontWeight: FontWeight.w800,
                                   color: Colors.white,
@@ -2761,10 +2547,12 @@ class _ScanScreenState extends State<ScanScreen> {
                             ),
                           ),
                           TextButton(
-                            onPressed: () => setState(() {
-                              _previewPath = null;
-                              _awaitingConfirm = false;
-                            }),
+                            onPressed: _busy
+                                ? null
+                                : () => setState(() {
+                                      _previewPath = null;
+                                      _awaitingConfirm = false;
+                                    }),
                             child: Text(
                               'Retake',
                               style: GoogleFonts.manrope(
@@ -2795,7 +2583,8 @@ class _ScanScreenState extends State<ScanScreen> {
                               height: 72,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white, width: 4),
+                                border:
+                                    Border.all(color: Colors.white, width: 4),
                               ),
                               child: Container(
                                 margin: const EdgeInsets.all(4),
@@ -2831,13 +2620,26 @@ class _ScanScreenState extends State<ScanScreen> {
                 child: Column(
                   children: [
                     Text(
-                      _busy ? 'Opening products…' : 'Point at a barcode to search',
+                      _busy
+                          ? 'Looking up product…'
+                          : 'Point at a barcode to search',
                       style: GoogleFonts.manrope(
                         color: Colors.white70,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: _busy ? null : _fallbackManualBarcode,
+                      child: Text(
+                        'Enter barcode manually',
+                        style: GoogleFonts.manrope(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primaryMid,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
                     TextButton(
                       onPressed: () => context.pop(),
                       child: Text(
@@ -2955,11 +2757,8 @@ class _BarcodeLiveView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (controller == null) {
-      return Center(
-        child: TextButton(
-          onPressed: onErrorFallback,
-          child: const Text('Continue without camera'),
-        ),
+      return const Center(
+        child: CircularProgressIndicator(color: Colors.white),
       );
     }
     return Column(
@@ -2970,7 +2769,15 @@ class _BarcodeLiveView extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                MobileScanner(
+                if (controller == null)
+                  const ColoredBox(
+                    color: Color(0xFF151C28),
+                    child: Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    ),
+                  )
+                else
+                  MobileScanner(
                   controller: controller!,
                   onDetect: onDetect,
                   errorBuilder: (context, error, child) {
@@ -2996,10 +2803,20 @@ class _BarcodeLiveView extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(height: 8),
+                              Text(
+                                error.errorDetails?.message ??
+                                    error.errorCode.name,
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.manrope(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
                               TextButton(
                                 onPressed: onErrorFallback,
                                 child: Text(
-                                  'Use sample scan',
+                                  'Enter search manually',
                                   style: GoogleFonts.manrope(
                                     color: AppColors.primaryMid,
                                     fontWeight: FontWeight.w700,
@@ -3090,18 +2907,73 @@ class _VoiceSearchDialog extends StatefulWidget {
 }
 
 class _VoiceSearchDialogState extends State<_VoiceSearchDialog> {
+  final SpeechToText _speech = SpeechToText();
+  String _heard = '';
+  String _status = 'Listening…';
+  bool _ready = false;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final router = GoRouter.of(context);
-      Future.delayed(const Duration(seconds: 2), () {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _start());
+  }
+
+  @override
+  void dispose() {
+    _speech.stop();
+    super.dispose();
+  }
+
+  Future<void> _start() async {
+    final micOk = await AppPermissions.ensureMicrophone();
+    if (!mounted) return;
+    if (!micOk) {
+      setState(() => _status = 'Microphone permission denied');
+      showAppToast(context, 'Microphone permission is required for voice search.');
+      return;
+    }
+    _ready = await _speech.initialize(
+      onError: (e) {
         if (!mounted) return;
-        Navigator.of(context).pop();
-        router.push(AppRoutes.productsQuery(search: 'organic honey'));
-      });
-    });
+        setState(() => _status = e.errorMsg);
+      },
+      onStatus: (s) {
+        if (!mounted) return;
+        if (s == 'done' || s == 'notListening') {
+          setState(() => _status = _heard.isEmpty ? 'No speech detected' : 'Got it');
+        }
+      },
+    );
+    if (!_ready) {
+      if (!mounted) return;
+      setState(() => _status = 'Speech recognition unavailable');
+      return;
+    }
+    await _speech.listen(
+      onResult: (result) {
+        if (!mounted) return;
+        setState(() {
+          _heard = result.recognizedWords;
+          _status = result.finalResult ? 'Searching…' : 'Listening…';
+        });
+        if (result.finalResult && _heard.trim().isNotEmpty) {
+          _finish(_heard.trim());
+        }
+      },
+      listenOptions: SpeechListenOptions(
+        listenFor: const Duration(seconds: 8),
+        pauseFor: const Duration(seconds: 2),
+        localeId: 'en_US',
+        partialResults: true,
+      ),
+    );
+  }
+
+  void _finish(String query) {
+    _speech.stop();
+    final router = GoRouter.of(context);
+    Navigator.of(context).pop();
+    router.push(AppRoutes.productsQuery(search: query));
   }
 
   @override
@@ -3117,7 +2989,10 @@ class _VoiceSearchDialogState extends State<_VoiceSearchDialog> {
             Align(
               alignment: Alignment.topRight,
               child: IconButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () {
+                  _speech.stop();
+                  Navigator.of(context).pop();
+                },
                 icon: const Icon(Icons.close, color: Colors.white70),
               ),
             ),
@@ -3140,36 +3015,41 @@ class _VoiceSearchDialogState extends State<_VoiceSearchDialog> {
               child: const Icon(Icons.mic, size: 40, color: Colors.white),
             ),
             const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (final h in [12.0, 22.0, 16.0, 28.0, 14.0, 24.0, 10.0])
-                  Container(
-                    width: 4,
-                    height: h,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.gradientMid,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
             Text(
-              'Listening...',
+              _status,
               style: GoogleFonts.manrope(
-                fontWeight: FontWeight.w700,
-                fontSize: 16,
-                color: Colors.white,
+                color: Colors.white70,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Say the product name',
-              style: GoogleFonts.manrope(
-                fontSize: 13,
-                color: Colors.white60,
+            if (_heard.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                '"$_heard"',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.manrope(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: () {
+                final q = _heard.trim();
+                if (q.isEmpty) {
+                  showAppToast(context, 'Speak a product name, then try again.');
+                  return;
+                }
+                _finish(q);
+              },
+              child: Text(
+                'Search',
+                style: GoogleFonts.manrope(
+                  color: AppColors.primaryMid,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ],

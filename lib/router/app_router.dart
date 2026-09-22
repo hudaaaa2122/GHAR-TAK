@@ -7,11 +7,13 @@ import '../constants/app_strings.dart';
 import '../core/theme/vertical_theme.dart';
 import '../features/account/account_screens.dart';
 import '../features/account/figma_screens.dart';
+import '../features/account/order_detail_screens.dart';
 import '../features/auth/auth_screens.dart';
 import '../features/auth/splash_intro_screens.dart';
 import '../features/cart/cart_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/info/info_screens.dart';
+import '../features/location/map_location_picker_screen.dart';
 import '../features/product/product_detail_screen.dart';
 import '../features/product/product_list_screen.dart';
 import '../features/providers.dart';
@@ -100,6 +102,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final q = state.uri.queryParameters;
           return ProductListScreen(
             search: q['search'],
+            barcode: q['barcode'],
             endpoint: q['endpoint'],
             categoryId: int.tryParse(q['categoryId'] ?? ''),
             manufacturerId: int.tryParse(q['manufacturerId'] ?? ''),
@@ -138,7 +141,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: AppRoutes.orderSuccess,
-        builder: (_, __) => const OrderSuccessScreen(),
+        builder: (_, state) => OrderSuccessScreen(
+          orderId: state.uri.queryParameters['orderId'],
+          trackingId: state.uri.queryParameters['trackingId'],
+        ),
       ),
       GoRoute(
         path: AppRoutes.tracking,
@@ -153,6 +159,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.addresses,
         builder: (_, __) => const AddressesScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.mapPicker,
+        builder: (_, state) {
+          final q = state.uri.queryParameters;
+          return MapLocationPickerScreen(
+            initialLat: double.tryParse(q['lat'] ?? ''),
+            initialLng: double.tryParse(q['lng'] ?? ''),
+          );
+        },
       ),
       GoRoute(
         path: AppRoutes.editProfile,

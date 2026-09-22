@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config/app_config.dart';
 import '../storage/token_storage.dart';
+import '../../constants/api_endpoints.dart';
 import 'api_response.dart';
 
 final tokenStorageProvider = Provider<TokenStorage>((_) => TokenStorage());
@@ -68,7 +69,7 @@ class ApiClient {
     try {
       final res = await Dio(
         BaseOptions(baseUrl: AppConfig.apiBaseUrl),
-      ).post('/refresh', queryParameters: {'refresh_token': refresh});
+      ).post(ApiEndpoints.refresh, queryParameters: {'refresh_token': refresh});
       final body = res.data;
       if (body is! Map) return false;
       final data = body['data'] is Map ? body['data'] as Map : body;
@@ -103,9 +104,41 @@ class ApiClient {
     dynamic body,
     Map<String, dynamic>? query,
     T Function(dynamic raw)? mapData,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   }) async {
     try {
-      final res = await _dio.post(path, data: body, queryParameters: query);
+      final res = await _dio.post(
+        path,
+        data: body,
+        queryParameters: query,
+        options: Options(
+          receiveTimeout: receiveTimeout,
+          sendTimeout: sendTimeout,
+        ),
+      );
+      return _parse(res.data, mapData: mapData);
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
+  Future<ApiResponse<T>> postMultipart<T>(
+    String path, {
+    required FormData formData,
+    Map<String, dynamic>? query,
+    T Function(dynamic raw)? mapData,
+  }) async {
+    try {
+      final res = await _dio.post(
+        path,
+        data: formData,
+        queryParameters: query,
+        options: Options(
+          contentType: 'multipart/form-data',
+          headers: {'Accept': 'application/json'},
+        ),
+      );
       return _parse(res.data, mapData: mapData);
     } on DioException catch (e) {
       throw _mapError(e);
@@ -177,12 +210,70 @@ class ApiClient {
     final data = e.response?.data;
     String message = e.message ?? 'Network error';
     if (data is Map) {
-      message = data['detail']?.toString() ??
-          data['message']?.toString() ??
-          message;
-      if (data['detail'] is List) {
-        message = (data['detail'] as List).join(', ');
+      final detail = data['detail'];
+      final parts = <String>[];
+
+      if (detail is String && detail.isNotEmpty) {
+        parts.add(detail);
+      } else if (detail is List) {
+        for (final item in detail) {
+          if (item is Map) {
+            final msg = item['msg']?.toString() ?? item['message']?.toString();
+            final loc = item['loc'];
+            final field = loc is List && loc.isNotEmpty
+                ? loc.last.toString()
+                : null;
+            if (msg != null && msg.isNotEmpty) {
+              parts.add(field != null && field != 'body' ? '$field: $msg' : msg);
+            }
+          } else {
+            parts.add(item.toString());
+          }
+        }
       }
+
+      final nested = data['data'];
+      if (nested is Map) {
+        final errors = nested['errors'] ?? nested['error'] ?? nested['message'];
+        if (errors is Map) {
+          errors.forEach((k, v) {
+            if (v is List) {
+              parts.add('$k: ${v.join(', ')}');
+            } else if (v != null) {
+              parts.add('$k: $v');
+            }
+          });
+        } else if (errors is List) {
+          for (final e in errors) {
+            parts.add(e.toString());
+          }
+        } else if (errors != null) {
+          parts.add(errors.toString());
+        }
+      }
+
+      if (data['message'] != null &&
+          data['message'].toString().isNotEmpty &&
+          !parts.contains(data['message'].toString())) {
+        parts.add(data['message'].toString());
+      }
+
+      if (parts.isNotEmpty) {
+        // Prefer specific messages over bare "Validation error".
+        final specific = parts
+            .where((p) => p.trim().toLowerCase() != 'validation error')
+            .toList();
+        message = (specific.isNotEmpty ? specific : parts).join('\n');
+      }
+    } else if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.sendTimeout) {
+      message =
+          'Order is taking longer than usual. Checking if it went through…';
+      return ApiException(message, statusCode: e.response?.statusCode, isTimeout: true);
+    } else if (e.type == DioExceptionType.connectionError) {
+      message =
+          'Cannot reach server at ${AppConfig.apiBaseUrl}. Is the API running?';
     }
     return ApiException(message, statusCode: e.response?.statusCode);
   }

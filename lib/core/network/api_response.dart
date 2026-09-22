@@ -43,11 +43,22 @@ class ApiResponse<T> {
 }
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
+  ApiException(this.message, {this.statusCode, this.isTimeout = false});
 
   final String message;
   final int? statusCode;
+  final bool isTimeout;
 
   @override
   String toString() => message;
+}
+
+extension ApiResponseX<T> on ApiResponse<T> {
+  /// Throws [ApiException] when the FastAPI envelope reports failure.
+  ApiResponse<T> ensureSuccess([String fallback = 'Request failed']) {
+    if (!success) {
+      throw ApiException(detail?.isNotEmpty == true ? detail! : fallback);
+    }
+    return this;
+  }
 }
