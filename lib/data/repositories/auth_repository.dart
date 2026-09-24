@@ -9,6 +9,7 @@ import '../../core/config/app_config.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_response.dart';
 import '../../core/storage/token_storage.dart';
+import '../../shared/app_toast.dart';
 import '../mock/mock_data.dart';
 import '../models/models.dart';
 
@@ -52,35 +53,64 @@ class AuthRepository {
     }
 
     final googleSignIn = GoogleSignIn(
-      scopes: const ['email', 'profile'],
+      scopes: const ['email', 'profile', 'openid'],
       // Web client ID → id_token audience matches backend GOOGLE_CLIENT_ID.
       serverClientId: AppConfig.googleClientId,
     );
 
     try {
-      await googleSignIn.signOut();
-    } catch (_) {}
+      try {
+        await googleSignIn.signOut();
+        await googleSignIn.disconnect();
+      } catch (_) {}
 
-    final account = await googleSignIn.signIn();
-    if (account == null) {
-      throw ApiException('Google sign-in cancelled');
-    }
+      final account = await googleSignIn.signIn();
+      if (account == null) {
+        throw ApiException('Google sign-in cancelled');
+      }
 
-    final auth = await account.authentication;
-    final idToken = auth.idToken;
-    if (idToken == null || idToken.isEmpty) {
-      throw ApiException(
-        'Could not get Google ID token. Ensure the app SHA-1 is registered '
-        'in Google Cloud Console for this OAuth client.',
+      var auth = await account.authentication;
+      var idToken = auth.idToken;
+      // Some devices return accessToken first; a second auth read helps.
+      if (idToken == null || idToken.isEmpty) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        auth = await account.authentication;
+        idToken = auth.idToken;
+      }
+      if (idToken == null || idToken.isEmpty) {
+        throw ApiException(
+          'Google did not return an ID token.\n\n'
+          'Fix: In Google Cloud Console → APIs & Services → Credentials, '
+          'create an Android OAuth client for package '
+          'com.ghertak.ghertak_mobile with SHA-1:\n'
+          'A7:88:F8:2C:2E:A8:BC:A9:41:0F:AB:B2:A3:A6:72:1E:40:5A:4E:4E\n'
+          '(this APK is signed with the debug key). '
+          'Keep the existing Web client ID for the backend.',
+        );
+      }
+
+      final res = await _api.post<Map<String, dynamic>>(
+        ApiEndpoints.google,
+        body: {'id_token': idToken},
+        mapData: (raw) => Map<String, dynamic>.from(raw as Map),
       );
+      return await _persistAuth(res);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      final msg = e.toString();
+      if (msg.contains('ApiException:10') ||
+          msg.contains('DEVELOPER_ERROR') ||
+          msg.contains('sign_in_failed')) {
+        throw ApiException(
+          'Google Sign-In is not set up for this app build.\n'
+          'Add Android OAuth client for com.ghertak.ghertak_mobile '
+          'with SHA-1 A7:88:F8:2C:2E:A8:BC:A9:41:0F:AB:B2:A3:A6:72:1E:40:5A:4E:4E '
+          'in Google Cloud Console.',
+        );
+      }
+      throw ApiException(friendlyUserMessage(e));
     }
-
-    final res = await _api.post<Map<String, dynamic>>(
-      ApiEndpoints.google,
-      body: {'id_token': idToken},
-      mapData: (raw) => Map<String, dynamic>.from(raw as Map),
-    );
-    return _persistAuth(res);
   }
 
   Future<UserModel> login({

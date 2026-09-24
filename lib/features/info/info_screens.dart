@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../constants/app_routes.dart';
+import '../../core/network/api_response.dart';
 import '../../core/theme/app_palette.dart';
 import '../../shared/brand_widgets.dart';
+import '../providers.dart';
 import 'info_content.dart';
 
 class InfoScaffold extends StatelessWidget {
@@ -65,7 +68,10 @@ class HelpHubScreen extends StatelessWidget {
     final tiles = [
       (Icons.info_outline_rounded, 'About / Our Purpose', AppRoutes.about),
       (Icons.mail_outline_rounded, 'Contact Us', AppRoutes.contact),
+      (Icons.support_agent_rounded, 'Customer Support', AppRoutes.support),
       (Icons.help_outline_rounded, 'FAQ', AppRoutes.faq),
+      (Icons.groups_outlined, 'Our Team', AppRoutes.team),
+      (Icons.map_outlined, 'Sitemap', AppRoutes.siteMap),
       (Icons.description_outlined, 'Terms & Conditions', AppRoutes.terms),
       (Icons.privacy_tip_outlined, 'Privacy Policy', AppRoutes.privacy),
     ];
@@ -222,18 +228,19 @@ class PrivacyScreen extends StatelessWidget {
   }
 }
 
-class FaqScreen extends StatefulWidget {
+class FaqScreen extends ConsumerStatefulWidget {
   const FaqScreen({super.key});
 
   @override
-  State<FaqScreen> createState() => _FaqScreenState();
+  ConsumerState<FaqScreen> createState() => _FaqScreenState();
 }
 
-class _FaqScreenState extends State<FaqScreen> {
+class _FaqScreenState extends ConsumerState<FaqScreen> {
   String _category = 'All';
   final _name = TextEditingController();
   final _email = TextEditingController();
   final _message = TextEditingController();
+  bool _sending = false;
 
   @override
   void dispose() {
@@ -241,6 +248,50 @@ class _FaqScreenState extends State<FaqScreen> {
     _email.dispose();
     _message.dispose();
     super.dispose();
+  }
+
+  Future<void> _sendHelp() async {
+    if (_sending) return;
+    final name = _name.text.trim();
+    final email = _email.text.trim();
+    final message = _message.text.trim();
+    if (name.isEmpty || email.isEmpty || message.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill name, email, and message')),
+      );
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      await ref.read(accountRepositoryProvider).submitSupport(
+            name: name,
+            email: email,
+            subject: 'FAQ help request',
+            message: message,
+            category: 'other',
+          );
+      if (!mounted) return;
+      _name.clear();
+      _email.clear();
+      _message.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Message sent. We will reply soon.')),
+      );
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not send message')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   @override
@@ -352,16 +403,7 @@ class _FaqScreenState extends State<FaqScreen> {
           ),
           const SizedBox(height: 12),
           FilledButton(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Message sent. We will reply soon.'),
-                ),
-              );
-              _name.clear();
-              _email.clear();
-              _message.clear();
-            },
+            onPressed: _sending ? null : _sendHelp,
             style: FilledButton.styleFrom(
               backgroundColor: p.teal,
               minimumSize: const Size.fromHeight(48),
@@ -369,11 +411,15 @@ class _FaqScreenState extends State<FaqScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('Send message'),
+            child: Text(_sending ? 'Sending…' : 'Send message'),
           ),
           TextButton(
             onPressed: () => context.push(AppRoutes.contact),
             child: Text('Go to Contact Us', style: TextStyle(color: p.teal)),
+          ),
+          TextButton(
+            onPressed: () => context.push(AppRoutes.support),
+            child: Text('Customer Support', style: TextStyle(color: p.teal)),
           ),
         ],
       ),
@@ -381,19 +427,20 @@ class _FaqScreenState extends State<FaqScreen> {
   }
 }
 
-class ContactScreen extends StatefulWidget {
+class ContactScreen extends ConsumerStatefulWidget {
   const ContactScreen({super.key});
 
   @override
-  State<ContactScreen> createState() => _ContactScreenState();
+  ConsumerState<ContactScreen> createState() => _ContactScreenState();
 }
 
-class _ContactScreenState extends State<ContactScreen> {
+class _ContactScreenState extends ConsumerState<ContactScreen> {
   final _name = TextEditingController();
   final _email = TextEditingController();
   final _phone = TextEditingController();
   final _subject = TextEditingController();
   final _message = TextEditingController();
+  bool _sending = false;
 
   @override
   void dispose() {
@@ -413,6 +460,55 @@ class _ContactScreenState extends State<ContactScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open WhatsApp')),
       );
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_sending) return;
+    final name = _name.text.trim();
+    final email = _email.text.trim();
+    final subject = _subject.text.trim();
+    final message = _message.text.trim();
+    final phone = _phone.text.trim();
+    if (name.isEmpty || email.isEmpty || subject.isEmpty || message.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill name, email, subject, and message')),
+      );
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      final body = phone.isEmpty ? message : '$message\n\nPhone: $phone';
+      await ref.read(accountRepositoryProvider).submitSupport(
+            name: name,
+            email: email,
+            subject: subject,
+            message: body,
+            category: 'general',
+          );
+      if (!mounted) return;
+      _name.clear();
+      _email.clear();
+      _phone.clear();
+      _subject.clear();
+      _message.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Thanks! Your message was submitted.')),
+      );
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not send message')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -495,13 +591,7 @@ class _ContactScreenState extends State<ContactScreen> {
           ),
           const SizedBox(height: 14),
           FilledButton(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Thanks! Your message was submitted.'),
-                ),
-              );
-            },
+            onPressed: _sending ? null : _submit,
             style: FilledButton.styleFrom(
               backgroundColor: p.teal,
               minimumSize: const Size.fromHeight(48),
@@ -509,7 +599,7 @@ class _ContactScreenState extends State<ContactScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('Submit'),
+            child: Text(_sending ? 'Sending…' : 'Submit'),
           ),
         ],
       ),
@@ -815,47 +905,82 @@ class _ContactInfoCard extends StatelessWidget {
         _ => Icons.place_outlined,
       };
 
+  Future<void> _launch(BuildContext context) async {
+    final Uri uri;
+    if (card.icon == 'email') {
+      uri = Uri(scheme: 'mailto', path: card.value);
+    } else if (card.icon == 'phone') {
+      final digits = card.value.replaceAll(RegExp(r'[^0-9+]'), '');
+      uri = Uri(scheme: 'tel', path: digits);
+    } else {
+      final q = Uri.encodeComponent(card.value);
+      uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$q');
+    }
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open ${card.title}')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open ${card.title}')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: p.cardBg,
+    return Material(
+      color: p.cardBg,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: () => _launch(context),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: p.border),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: p.tealSoft,
-            child: Icon(_icon, color: p.teal),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: p.border),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  card.title,
-                  style: TextStyle(
-                    color: p.textMuted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: p.tealSoft,
+                child: Icon(_icon, color: p.teal),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      card.title,
+                      style: TextStyle(
+                        color: p.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      card.value,
+                      style: TextStyle(
+                        color: p.textPrimary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  card.value,
-                  style: TextStyle(
-                    color: p.textPrimary,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
+              ),
+              Icon(Icons.open_in_new_rounded, size: 18, color: p.textMuted),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

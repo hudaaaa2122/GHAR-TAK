@@ -28,6 +28,14 @@ class OrderRepository {
     int? shippingId,
     int? taxId,
     int? couponId,
+    List<Map<String, dynamic>>? paymentProof,
+    Map<String, dynamic>? paymentResponse,
+    String? customerContact,
+    String? paymentId,
+    String? paymentStatus,
+    /// Website `order/cartcreate` cart lines — required for guest checkout.
+    List<Map<String, dynamic>>? cart,
+    int? customerId,
   }) async {
     if (AppConfig.useMockData) {
       await Future<void>.delayed(const Duration(milliseconds: 500));
@@ -44,8 +52,10 @@ class OrderRepository {
       );
     }
 
+    // Mirror website CheckoutPaymentPage → POST order/cartcreate with cart body
+    // so guests can place orders without a server-side cart / auth.
     final res = await _api.post<Map<String, dynamic>>(
-      ApiEndpoints.orderCreateFromCart,
+      ApiEndpoints.orderCartCreate,
       body: {
         'shipping_address': shippingAddress,
         if (billingAddress != null) 'billing_address': billingAddress,
@@ -59,6 +69,16 @@ class OrderRepository {
         'use_wallet': useWallet,
         if (walletAmount != null) 'wallet_amount': walletAmount,
         'allow_substitution': allowSubstitution,
+        if (customerContact != null && customerContact.isNotEmpty)
+          'customer_contact': customerContact,
+        if (paymentProof != null && paymentProof.isNotEmpty)
+          'payment_proof': paymentProof,
+        if (paymentResponse != null) 'payment_response': paymentResponse,
+        if (paymentId != null) 'payment_id': paymentId,
+        'payment_status': paymentStatus ??
+            (paymentId != null ? 'success' : 'cash-on-delivery'),
+        if (cart != null) 'cart': cart,
+        'customer_id': customerId,
       },
       // Backend sends email/notifications before responding — can exceed 25s.
       receiveTimeout: const Duration(seconds: 90),
@@ -68,7 +88,7 @@ class OrderRepository {
     );
     res.ensureSuccess('Could not place order');
     final data = res.data ?? res.raw ?? {};
-    // create-from-cart returns flat { order_id, tracking_number, ... }
+    // cartcreate returns flat { order_id, tracking_number, ... }
     // (not nested under `order`).
     final orderRaw = data['order'] is Map ? data['order'] : data;
     final map = Map<String, dynamic>.from(orderRaw as Map);
@@ -76,6 +96,29 @@ class OrderRepository {
       map['id'] = map['order_id'];
     }
     return OrderModel.fromJson(map);
+  }
+
+  Future<CouponModel?> redeemCoupon(String code) async {
+    final trimmed = code.trim();
+    if (trimmed.isEmpty) return null;
+    if (AppConfig.useMockData) {
+      return CouponModel(
+        id: 1,
+        code: trimmed,
+        type: 'fixed',
+        amount: 100,
+        minimumCartAmount: 0,
+      );
+    }
+    final res = await _api.get<Map<String, dynamic>>(
+      ApiEndpoints.couponRedeem(trimmed),
+      mapData: (raw) =>
+          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{},
+    );
+    res.ensureSuccess('Invalid coupon code');
+    final data = res.data ?? {};
+    if (data.isEmpty) return null;
+    return CouponModel.fromJson(data);
   }
 
   Future<List<OrderModel>> listMine({bool completed = false}) async {
@@ -173,34 +216,95 @@ class OrderRepository {
     }
   }
 
-  Future<void> cancel(String orderId, {String? reason}) async {
+  Future<void> cancel(
+    String orderId, {
+    String? reason,
+    bool notifyCustomer = true,
+  }) async {
     if (AppConfig.useMockData) return;
     final res = await _api.post(
       ApiEndpoints.orderCancel(orderId),
       body: {
         if (reason != null && reason.isNotEmpty) 'reason': reason,
+        'notify_customer': notifyCustomer,
       },
     );
     res.ensureSuccess('Could not cancel order');
   }
 
-  /// Full-order return/refund request (completed orders only — same as website).
+  /// Website `POST /returns/request` — full_order or single_product + photos.
   Future<void> requestReturn({
     required int orderId,
     required String reason,
     String returnType = 'full_order',
+    List<Map<String, dynamic>> photos = const [],
+    List<Map<String, dynamic>> items = const [],
+  }) async {
+    if (AppConfig.useMockData) return;
+    final body = <String, dynamic>{
+      'order_id': orderId,
+      'return_type': returnType,
+      'reason': reason.isEmpty ? 'Customer requested return' : reason,
+      'photos': photos,
+    };
+    if (returnType == 'single_product' && items.isNotEmpty) {
+      body['items'] = items;
+    }
+    final res = await _api.post(
+      ApiEndpoints.returnsRequest,
+      body: body,
+    );
+    res.ensureSuccess('Could not submit return request');
+  }
+
+  Future<Map<String, dynamic>?> getOrderReview(String orderId) async {
+    if (AppConfig.useMockData) return null;
+    try {
+      final res = await _api.get<Map<String, dynamic>>(
+        ApiEndpoints.orderReviewByOrder(orderId),
+        mapData: (raw) {
+          if (raw is Map) return Map<String, dynamic>.from(raw);
+          return <String, dynamic>{};
+        },
+      );
+      if (!res.success) return null;
+      final data = res.data;
+      if (data == null || data.isEmpty) return null;
+      return data;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> createOrderReview({
+    required int orderId,
+    required int rating,
+    int? deliveryRating,
+    int? packagingRating,
+    int? productQualityRating,
+    int? fulfillmentRating,
+    String? comment,
+    String? fulfillmentComment,
+    List<Map<String, dynamic>> photos = const [],
   }) async {
     if (AppConfig.useMockData) return;
     final res = await _api.post(
-      ApiEndpoints.returnsRequest,
+      ApiEndpoints.orderReviewCreate,
       body: {
         'order_id': orderId,
-        'return_type': returnType,
-        'reason': reason,
-        'photos': <dynamic>[],
+        'rating': rating,
+        if (deliveryRating != null) 'delivery_rating': deliveryRating,
+        if (packagingRating != null) 'packaging_rating': packagingRating,
+        if (productQualityRating != null)
+          'product_quality_rating': productQualityRating,
+        if (fulfillmentRating != null) 'fulfillment_rating': fulfillmentRating,
+        if (comment != null && comment.isNotEmpty) 'comment': comment,
+        if (fulfillmentComment != null && fulfillmentComment.isNotEmpty)
+          'fulfillment_comment': fulfillmentComment,
+        'photos': photos,
       },
     );
-    res.ensureSuccess('Could not submit return request');
+    res.ensureSuccess('Could not submit order review');
   }
 
   Future<List<ReturnRequestModel>> listMyReturns() async {

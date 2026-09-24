@@ -1,22 +1,33 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
+import '../core/theme/app_fonts.dart';
 import 'package:intl/intl.dart';
 
 import '../core/config/app_config.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/app_palette.dart';
 import '../core/theme/vertical_theme.dart';
 import '../data/models/models.dart';
 import '../features/providers.dart';
+import 'app_toast.dart';
 
 export 'brand_widgets.dart';
+export 'web_ui.dart';
+export 'app_toast.dart';
 
 String resolveMediaUrl(String? path) {
   if (path == null || path.isEmpty) return '';
   var url = path.trim();
+  if (url.isEmpty) return '';
 
-  // Absolute URL: rewrite localhost media hosts to the configured API origin
+  // Generated SVG avatars (data URLs) — callers should fall back to initials.
+  if (url.startsWith('data:')) return '';
+
+  final apiBase = AppConfig.apiBaseUrl.replaceAll(RegExp(r'/$'), '');
+  final siteBase = AppConfig.websiteBaseUrl.replaceAll(RegExp(r'/$'), '');
+
+  // Absolute URL: rewrite localhost / 127.0.0.1 media hosts to the API origin
   // (matches website `resolveMediaUrl` in mediaUrl.ts).
   if (url.startsWith('http://') || url.startsWith('https://')) {
     try {
@@ -24,23 +35,19 @@ String resolveMediaUrl(String? path) {
       final host = uri.host.toLowerCase();
       final isLocal = host == 'localhost' || host == '127.0.0.1';
       if (isLocal && uri.path.startsWith('/media/')) {
-        final base = AppConfig.apiBaseUrl.replaceAll(RegExp(r'/$'), '');
-        url = '$base${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
+        url = '$apiBase${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
       } else if (isLocal) {
-        final base = AppConfig.apiBaseUrl.replaceAll(RegExp(r'/$'), '');
-        url = '$base${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
+        url = '$apiBase${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}';
       }
+      // Keep non-local absolute URLs as-is (Shopify CDN, api.ghertak.com, …).
     } catch (_) {
       url = url
-          .replaceFirst(RegExp(r'https?://localhost(:\d+)?'), AppConfig.apiBaseUrl)
-          .replaceFirst(
-            RegExp(r'https?://127\.0\.0\.1(:\d+)?'),
-            AppConfig.apiBaseUrl,
-          );
+          .replaceFirst(RegExp(r'https?://localhost(:\d+)?'), apiBase)
+          .replaceFirst(RegExp(r'https?://127\.0\.0\.1(:\d+)?'), apiBase);
     }
-    // Emulator → host machine when API itself is local.
-    if (AppConfig.apiBaseUrl.contains('10.0.2.2') ||
-        AppConfig.apiBaseUrl.contains('localhost')) {
+
+    // Android emulator → host machine when API itself is local.
+    if (apiBase.contains('10.0.2.2') || apiBase.contains('localhost')) {
       url = url
           .replaceFirst('http://localhost', 'http://10.0.2.2')
           .replaceFirst('http://127.0.0.1', 'http://10.0.2.2');
@@ -48,14 +55,29 @@ String resolveMediaUrl(String? path) {
     return url;
   }
 
-  final base = AppConfig.apiBaseUrl.replaceAll(RegExp(r'/$'), '');
-  if (url.startsWith('/')) return '$base$url';
-  return '$base/$url';
+  // Bare icon name from browse-tiles (`lipstick`) → website static icons.
+  if (!url.contains('/') &&
+      !url.contains('.') &&
+      RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(url)) {
+    return '$siteBase/category-icons/$url.png';
+  }
+
+  // Category icon pack lives on the customer website, not the API host.
+  // e.g. /category-icons/lipstick.png → https://ghertak.com/category-icons/...
+  final normalized = url.startsWith('/') ? url : '/$url';
+  if (normalized.startsWith('/category-icons/')) {
+    return '$siteBase$normalized';
+  }
+
+  // Relative `/media/...` or other API paths.
+  if (url.startsWith('/')) return '$apiBase$url';
+  return '$apiBase/$url';
 }
 
 String formatRs(num value) {
-  final f = NumberFormat.currency(symbol: 'Rs ', decimalDigits: 0);
-  return f.format(value);
+  // Website `currencyFormatter` → "Rs. 1,250" (whole rupees).
+  final n = NumberFormat('#,###');
+  return 'Rs. ${n.format(value.round())}';
 }
 
 class AnnouncementBar extends ConsumerWidget {
@@ -76,16 +98,135 @@ class AnnouncementBar extends ConsumerWidget {
 
     return Container(
       width: double.infinity,
-      color: AppColors.primary,
+      decoration: const BoxDecoration(
+        gradient: AppColors.announcementGradient,
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Text(
         resolved,
         textAlign: TextAlign.center,
-        style: GoogleFonts.manrope(
+        style: AppFonts.style(
           color: Colors.white,
           fontSize: 11,
           fontWeight: FontWeight.w600,
         ),
+      ),
+    );
+  }
+}
+
+/// Website `FreeDeliveryBar` — progress toward complimentary delivery.
+class FreeDeliveryBar extends StatelessWidget {
+  const FreeDeliveryBar({
+    super.key,
+    required this.subtotal,
+    required this.threshold,
+    this.enabled = true,
+  });
+
+  final double subtotal;
+  final double threshold;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled || threshold <= 0) return const SizedBox.shrink();
+
+    final remaining = (threshold - subtotal).clamp(0.0, double.infinity);
+    final progress = (subtotal / threshold).clamp(0.0, 1.0);
+    final qualified = remaining <= 0;
+
+    if (qualified) {
+      return Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          color: Color(0xFFEAF6ED),
+          border: Border(bottom: BorderSide(color: Color(0xFFC8E8D4))),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle, size: 18, color: Color(0xFF15824B)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Your order qualifies for complimentary fulfillment!',
+                style: AppFonts.style(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF15824B),
+                  height: 1.25,
+                ),
+              ),
+            ),
+            Text(
+              'COMPLIMENTARY',
+              style: AppFonts.style(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+                color: const Color(0xFF15824B),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: Color(0xFFE1F0F3),
+        border: Border(bottom: BorderSide(color: Color(0xFFC8DEDA))),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.local_shipping_outlined,
+              size: 18, color: Color(0xFF11788C)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Add ${formatRs(remaining)} more for complimentary fulfillment',
+                        style: AppFonts.style(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF0C6376),
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      formatRs(threshold),
+                      style: AppFonts.style(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(99),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 6,
+                    backgroundColor: const Color(0xFFC8DEDA),
+                    color: const Color(0xFF11788C),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -130,7 +271,7 @@ class VerticalTabs extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       v.label,
-                      style: GoogleFonts.manrope(
+                      style: AppFonts.style(
                         fontWeight: FontWeight.w700,
                         fontSize: 13,
                         color: active ? Colors.white : v.fg,
@@ -161,16 +302,22 @@ class SearchField extends StatelessWidget {
     super.key,
     this.controller,
     this.onSubmitted,
+    this.onChanged,
     this.onTap,
     this.readOnly = false,
     this.hint = 'Search products, brands...',
+    this.showSearchButton = true,
+    this.autofocus = false,
   });
 
   final TextEditingController? controller;
   final ValueChanged<String>? onSubmitted;
+  final ValueChanged<String>? onChanged;
   final VoidCallback? onTap;
   final bool readOnly;
   final String hint;
+  final bool showSearchButton;
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) {
@@ -180,35 +327,42 @@ class SearchField extends StatelessWidget {
           child: TextField(
             controller: controller,
             readOnly: readOnly,
+            autofocus: autofocus,
             onTap: onTap,
+            onChanged: onChanged,
             onSubmitted: onSubmitted,
+            textInputAction: TextInputAction.search,
             decoration: InputDecoration(
               hintText: hint,
               isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              prefixIcon: const Icon(Icons.search, size: 20),
             ),
           ),
         ),
-        const SizedBox(width: 8),
-        Material(
-          color: AppColors.primary,
-          borderRadius: BorderRadius.circular(10),
-          child: InkWell(
-            onTap: () {
-              if (controller != null && onSubmitted != null) {
-                onSubmitted!(controller!.text);
-              } else {
-                onTap?.call();
-              }
-            },
+        if (showSearchButton) ...[
+          const SizedBox(width: 8),
+          Material(
+            color: AppColors.primary,
             borderRadius: BorderRadius.circular(10),
-            child: const SizedBox(
-              width: 44,
-              height: 44,
-              child: Icon(Icons.search, color: Colors.white),
+            child: InkWell(
+              onTap: () {
+                if (controller != null && onSubmitted != null) {
+                  onSubmitted!(controller!.text);
+                } else {
+                  onTap?.call();
+                }
+              },
+              borderRadius: BorderRadius.circular(10),
+              child: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Icon(Icons.search, color: Colors.white),
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -240,7 +394,7 @@ class SectionHeader extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: GoogleFonts.manrope(
+                  style: AppFonts.style(
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
                     color: AppColors.textPrimary,
@@ -249,7 +403,7 @@ class SectionHeader extends StatelessWidget {
                 if (subtitle != null)
                   Text(
                     subtitle!,
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontSize: 12,
                       color: AppColors.textSecondary,
                     ),
@@ -262,7 +416,7 @@ class SectionHeader extends StatelessWidget {
               onPressed: onAction,
               child: Text(
                 actionLabel,
-                style: GoogleFonts.manrope(
+                style: AppFonts.style(
                   color: AppColors.primary,
                   fontWeight: FontWeight.w700,
                   fontSize: 13,
@@ -280,140 +434,333 @@ class ProductCard extends ConsumerWidget {
     super.key,
     required this.product,
     required this.onTap,
-    required this.onAdd,
+    this.onAdd,
     this.sellingFast = false,
+    this.width,
   });
 
   final ProductModel product;
   final VoidCallback onTap;
-  final VoidCallback onAdd;
+  /// Optional override; when null, card manages cart via [cartProvider].
+  final VoidCallback? onAdd;
   final bool sellingFast;
+  /// Set for horizontal rails (e.g. home). Null fills the parent (grids).
+  final double? width;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = ref.watch(verticalThemeProvider);
     final url = resolveMediaUrl(product.image?.best);
+    final cardW = width;
+    final compact = cardW != null && cardW < 140;
+    final cartItems = ref.watch(cartProvider).valueOrNull ?? [];
+    CartItemModel? cartItem;
+    for (final i in cartItems) {
+      if (i.product.id == product.id) {
+        cartItem = i;
+        break;
+      }
+    }
+    final qtyInCart = cartItem?.quantity ?? 0;
+    final inCart = qtyInCart > 0;
+    final maxStock = product.quantity ?? 999;
+    final inStock = product.inStock;
+    final outOfStock = !inStock;
+
+    Future<void> addOne() async {
+      if (outOfStock) return;
+      if (onAdd != null) {
+        onAdd!();
+        return;
+      }
+      try {
+        await ref.read(cartProvider.notifier).add(product);
+      } catch (e) {
+        if (context.mounted) showAppToast(context, e);
+      }
+    }
+
+    Future<void> setQty(int next) async {
+      if (cartItem == null) return;
+      try {
+        await ref.read(cartProvider.notifier).setQty(cartItem, next);
+      } catch (e) {
+        if (context.mounted) showAppToast(context, e);
+      }
+    }
+
+    final nameSize = compact ? 10.5 : 12.5;
+    final priceSize = compact ? 12.0 : 15.0;
+    final strikeSize = compact ? 9.5 : 11.0;
+    final p = AppPalette.of(context);
+
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        width: 160,
+        width: cardW,
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
+          color: p.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: p.border),
+          boxShadow: Theme.of(context).brightness == Brightness.dark
+              ? null
+              : AppColors.cardShadow,
         ),
-        padding: const EdgeInsets.all(10),
+        padding: EdgeInsets.all(compact ? 7 : 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (sellingFast)
+            if (sellingFast && !outOfStock)
               Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                margin: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppColors.orangeSoft,
-                  borderRadius: BorderRadius.circular(20),
+                  color: const Color(0xFFF3E6DC),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   'SELLING FAST',
-                  style: GoogleFonts.manrope(
-                    fontSize: 9,
+                  style: AppFonts.style(
+                    fontSize: 8,
                     fontWeight: FontWeight.w800,
-                    color: AppColors.orange,
+                    color: const Color(0xFF8F4F2A),
                   ),
                 ),
               ),
             Expanded(
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: url.isEmpty
-                    ? Container(color: AppColors.chipBg)
-                    : CachedNetworkImage(
-                        imageUrl: url,
-                        fit: BoxFit.contain,
-                        width: double.infinity,
-                        errorWidget: (_, __, ___) =>
-                            Container(color: AppColors.chipBg),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ColoredBox(
+                      color: p.inputFill,
+                      child: url.isEmpty
+                          ? ColoredBox(color: p.section)
+                          : Opacity(
+                              opacity: outOfStock ? 0.55 : 1,
+                              child: CachedNetworkImage(
+                                imageUrl: url,
+                                fit: BoxFit.contain,
+                                width: double.infinity,
+                                errorWidget: (_, __, ___) =>
+                                    ColoredBox(color: p.section),
+                              ),
+                            ),
+                    ),
+                    // Website ProductCard: red OUT OF STOCK badge on image.
+                    if (outOfStock)
+                      ColoredBox(
+                        color: Colors.white.withValues(alpha: 0.75),
+                        child: Center(
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 6),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: compact ? 6 : 10,
+                              vertical: compact ? 3 : 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFDC2626),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              'OUT OF STOCK',
+                              textAlign: TextAlign.center,
+                              style: AppFonts.style(
+                                fontSize: compact ? 8 : 10,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: compact ? 6 : 8),
             Text(
               product.name,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.manrope(
+              softWrap: true,
+              style: AppFonts.style(
                 fontWeight: FontWeight.w700,
-                fontSize: 13,
+                fontSize: nameSize,
                 height: 1.25,
+                color: outOfStock ? p.textMuted : p.textPrimary,
               ),
             ),
-            const SizedBox(height: 6),
+            SizedBox(height: compact ? 4 : 6),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
               children: [
-                Text(
-                  formatRs(product.displayPrice),
-                  style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 14,
-                    color: theme.primary,
+                Flexible(
+                  flex: 3,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      formatRs(product.displayPrice),
+                      maxLines: 1,
+                      softWrap: false,
+                      style: AppFonts.style(
+                        fontWeight: FontWeight.w800,
+                        fontSize: priceSize,
+                        height: 1.1,
+                        color: outOfStock
+                            ? AppColors.textMuted
+                            : AppColors.textPrimary,
+                      ),
+                    ),
                   ),
                 ),
                 if (product.hasDiscount) ...[
-                  const SizedBox(width: 6),
-                  Text(
-                    formatRs(product.price),
-                    style: GoogleFonts.manrope(
-                      fontSize: 11,
-                      color: AppColors.textMuted,
-                      decoration: TextDecoration.lineThrough,
+                  const SizedBox(width: 4),
+                  Flexible(
+                    flex: 2,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        formatRs(product.price),
+                        maxLines: 1,
+                        softWrap: false,
+                        style: AppFonts.style(
+                          fontSize: strikeSize,
+                          height: 1.1,
+                          color: AppColors.textMuted,
+                          decoration: TextDecoration.lineThrough,
+                        ),
+                      ),
                     ),
                   ),
                 ],
               ],
             ),
-            if (sellingFast && product.quantity != null) ...[
-              const SizedBox(height: 4),
+            if (sellingFast && !outOfStock && product.quantity != null) ...[
+              const SizedBox(height: 2),
               Text(
                 'Only ${product.quantity} left',
-                style: GoogleFonts.manrope(
-                  fontSize: 11,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppFonts.style(
+                  fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.orange,
-                ),
-              ),
-              const SizedBox(height: 4),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: ((product.quantity ?? 0) / 20).clamp(0.05, 1),
-                  minHeight: 4,
-                  backgroundColor: AppColors.border,
-                  color: AppColors.orange,
+                  color: const Color(0xFF8F4F2A),
                 ),
               ),
             ],
-            const SizedBox(height: 8),
+            SizedBox(height: compact ? 6 : 8),
             SizedBox(
               width: double.infinity,
-              height: 36,
-              child: ElevatedButton.icon(
-                onPressed: onAdd,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.primary,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.zero,
-                  textStyle: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
-                ),
-                icon: const Icon(Icons.shopping_cart_outlined, size: 16),
-                label: const Text('Add to Cart'),
+              height: compact ? 30 : 36,
+              child: GestureDetector(
+                onTap: () {}, // absorb tap so card onTap doesn't fire
+                child: outOfStock
+                    ? DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: AppColors.gray200,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Out of stock',
+                            style: AppFonts.style(
+                              fontWeight: FontWeight.w700,
+                              fontSize: compact ? 10 : 12,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ),
+                      )
+                    : inCart
+                        ? Material(
+                            color: theme.primary,
+                            borderRadius: BorderRadius.circular(999),
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 10),
+                              child: Row(
+                                children: [
+                                  _QtyCircleButton(
+                                    icon: Icons.remove,
+                                    onTap: () => setQty(qtyInCart - 1),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      '$qtyInCart',
+                                      textAlign: TextAlign.center,
+                                      style: AppFonts.style(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: compact ? 12 : 14,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  _QtyCircleButton(
+                                    icon: Icons.add,
+                                    onTap: qtyInCart >= maxStock
+                                        ? null
+                                        : () => setQty(qtyInCart + 1),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : FilledButton(
+                            onPressed: addOne,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: theme.primary,
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              textStyle: AppFonts.style(
+                                fontWeight: FontWeight.w700,
+                                fontSize: compact ? 11 : 12,
+                              ),
+                            ),
+                            child: Text(compact ? 'Add' : 'Add to cart'),
+                          ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QtyCircleButton extends StatelessWidget {
+  const _QtyCircleButton({required this.icon, this.onTap});
+
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      customBorder: const CircleBorder(),
+      child: Container(
+        width: 22,
+        height: 22,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.9)),
+          color: Colors.white.withValues(alpha: onTap == null ? 0.2 : 0.0),
+        ),
+        child: Icon(
+          icon,
+          size: 14,
+          color: Colors.white.withValues(alpha: onTap == null ? 0.5 : 1),
         ),
       ),
     );
@@ -444,7 +791,7 @@ class PromoBannerTeal extends StatelessWidget {
         children: [
           Text(
             'ONLINE EXCLUSIVE',
-            style: GoogleFonts.manrope(
+            style: AppFonts.style(
               color: Colors.white.withValues(alpha: 0.9),
               fontWeight: FontWeight.w700,
               fontSize: 11,
@@ -454,7 +801,7 @@ class PromoBannerTeal extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             'Pay Week Sale – Up to 40% Off',
-            style: GoogleFonts.manrope(
+            style: AppFonts.style(
               color: Colors.white,
               fontWeight: FontWeight.w800,
               fontSize: titleSize,
@@ -466,7 +813,7 @@ class PromoBannerTeal extends StatelessWidget {
             'Grab month-end savings on your basics.',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.manrope(
+            style: AppFonts.style(
               color: Colors.white.withValues(alpha: 0.92),
               fontSize: 13,
             ),
@@ -482,7 +829,7 @@ class PromoBannerTeal extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Text(
                   'Shop Now →',
-                  style: GoogleFonts.manrope(
+                  style: AppFonts.style(
                     fontWeight: FontWeight.w800,
                     color: AppColors.primary,
                     fontSize: 13,
@@ -562,7 +909,7 @@ class PromoBannerOrange extends StatelessWidget {
               children: [
                 Text(
                   'Breakfast & Spreads',
-                  style: GoogleFonts.manrope(
+                  style: AppFonts.style(
                     color: _title,
                     fontWeight: FontWeight.w800,
                     fontSize: titleSize,
@@ -572,7 +919,7 @@ class PromoBannerOrange extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   'Start your day right',
-                  style: GoogleFonts.manrope(
+                  style: AppFonts.style(
                     color: _subtitle,
                     fontWeight: FontWeight.w500,
                     fontSize: 14,
@@ -592,7 +939,7 @@ class PromoBannerOrange extends StatelessWidget {
                       ),
                       child: Text(
                         'Shop Now →',
-                        style: GoogleFonts.manrope(
+                        style: AppFonts.style(
                           fontWeight: FontWeight.w800,
                           color: Colors.white,
                           fontSize: 13,

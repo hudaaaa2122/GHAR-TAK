@@ -2,10 +2,11 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
+import '../../core/theme/app_fonts.dart';
 
 import '../../constants/app_routes.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_palette.dart';
 import '../../data/models/models.dart';
 import '../../shared/figma_chrome.dart';
 import '../../shared/widgets.dart';
@@ -25,6 +26,54 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   int _qty = 1;
   int _thumbIndex = 0;
   bool _wishlisted = false;
+  bool _wishlistBusy = false;
+  bool _wishlistLoaded = false;
+
+  Future<void> _syncWishlistFlag(ProductModel p) async {
+    if (_wishlistLoaded) return;
+    _wishlistLoaded = true;
+    final user = ref.read(authStateProvider).valueOrNull;
+    if (user == null) return;
+    try {
+      final on = await ref.read(accountRepositoryProvider).isInWishlist(p.id);
+      if (mounted) setState(() => _wishlisted = on);
+    } catch (_) {}
+  }
+
+  Future<void> _toggleWishlist(ProductModel p) async {
+    final user = ref.read(authStateProvider).valueOrNull;
+    if (user == null) {
+      showAppToast(context, 'Sign in to save items to your wishlist');
+      context.push(AppRoutes.login);
+      return;
+    }
+    if (_wishlistBusy) return;
+    setState(() => _wishlistBusy = true);
+    final next = !_wishlisted;
+    setState(() => _wishlisted = next);
+    try {
+      final repo = ref.read(accountRepositoryProvider);
+      if (next) {
+        await repo.addToWishlist(p.id);
+        if (mounted) {
+          showAppToast(context, 'Added to wishlist', isError: false);
+        }
+      } else {
+        await repo.removeFromWishlist(p.id);
+        if (mounted) {
+          showAppToast(context, 'Removed from wishlist', isError: false);
+        }
+      }
+      ref.invalidate(wishlistProvider);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _wishlisted = !next);
+        showAppToast(context, e);
+      }
+    } finally {
+      if (mounted) setState(() => _wishlistBusy = false);
+    }
+  }
 
   Future<void> _addToCart(ProductModel p, {bool buyNow = false}) async {
     try {
@@ -48,7 +97,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     final async = ref.watch(productDetailProvider(widget.idOrSlug));
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppPalette.of(context).background,
       body: async.when(
         data: (p) => _buildBody(p),
         loading: () => const Column(
@@ -68,8 +117,20 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }
 
   Widget _buildBody(ProductModel p) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncWishlistFlag(p));
     final url = resolveMediaUrl(p.image?.best);
-    final inStock = (p.quantity ?? 1) > 0;
+    final inStock = p.inStock;
+    final cartItems = ref.watch(cartProvider).valueOrNull ?? [];
+    CartItemModel? cartItem;
+    for (final i in cartItems) {
+      if (i.product.id == p.id) {
+        cartItem = i;
+        break;
+      }
+    }
+    final qtyInCart = cartItem?.quantity ?? 0;
+    final inCart = qtyInCart > 0;
+    final maxStock = p.quantity ?? 999;
     final savePct = p.hasDiscount && p.price > 0
         ? (((p.price - p.displayPrice) / p.price) * 100).round()
         : 0;
@@ -83,42 +144,49 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       url,
     ];
 
+    final palette = AppPalette.of(context);
+
     return Column(
       children: [
         Material(
-          color: Colors.white,
+          color: palette.surface,
           child: SafeArea(
             bottom: false,
             child: Container(
               height: 64,
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: AppColors.borderLight)),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: palette.border)),
               ),
               child: Row(
                 children: [
                   FigmaBackButton(onPressed: () => context.pop()),
                   const Spacer(),
                   Material(
-                    color: Colors.white,
-                    shape: const CircleBorder(
-                      side: BorderSide(color: AppColors.border),
+                    color: palette.surface,
+                    shape: CircleBorder(
+                      side: BorderSide(color: palette.border),
                     ),
                     child: InkWell(
                       customBorder: const CircleBorder(),
-                      onTap: () => setState(() => _wishlisted = !_wishlisted),
+                      onTap: _wishlistBusy ? null : () => _toggleWishlist(p),
                       child: SizedBox(
                         width: 40,
                         height: 40,
-                        child: Icon(
-                          _wishlisted
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          size: 20,
-                          color: _wishlisted
-                              ? AppColors.error
-                              : AppColors.textPrimary,
-                        ),
+                        child: _wishlistBusy
+                            ? const Padding(
+                                padding: EdgeInsets.all(10),
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Icon(
+                                _wishlisted
+                                    ? Icons.favorite
+                                    : Icons.favorite_border,
+                                size: 20,
+                                color: _wishlisted
+                                    ? AppColors.error
+                                    : AppColors.textPrimary,
+                              ),
                       ),
                     ),
                   ),
@@ -140,19 +208,52 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     border: Border.all(color: AppColors.border),
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: thumbs[_thumbIndex].isEmpty
-                      ? const ColoredBox(
-                          color: AppColors.chipBg,
-                          child: Icon(
-                            Icons.image_outlined,
-                            size: 64,
-                            color: AppColors.textMuted,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      thumbs[_thumbIndex].isEmpty
+                          ? ColoredBox(
+                              color: AppColors.chipBg,
+                              child: Icon(
+                                Icons.image_outlined,
+                                size: 64,
+                                color: AppColors.textMuted,
+                              ),
+                            )
+                          : Opacity(
+                              opacity: inStock ? 1 : 0.55,
+                              child: CachedNetworkImage(
+                                imageUrl: thumbs[_thumbIndex],
+                                fit: BoxFit.contain,
+                              ),
+                            ),
+                      if (!inStock)
+                        ColoredBox(
+                          color: Colors.white.withValues(alpha: 0.75),
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFDC2626),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'OUT OF STOCK',
+                                style: AppFonts.style(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ),
                           ),
-                        )
-                      : CachedNetworkImage(
-                          imageUrl: thumbs[_thumbIndex],
-                          fit: BoxFit.contain,
                         ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -177,7 +278,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         ),
                         clipBehavior: Clip.antiAlias,
                         child: thumbs[i].isEmpty
-                            ? const ColoredBox(color: AppColors.chipBg)
+                            ? ColoredBox(color: AppColors.chipBg)
                             : CachedNetworkImage(
                                 imageUrl: thumbs[i],
                                 fit: BoxFit.cover,
@@ -190,7 +291,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               const SizedBox(height: 16),
               Text(
                 'GHER TAK',
-                style: GoogleFonts.manrope(
+                style: AppFonts.style(
                   fontWeight: FontWeight.w700,
                   fontSize: 11,
                   letterSpacing: 1.2,
@@ -200,11 +301,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               const SizedBox(height: 4),
               Text(
                 p.name,
-                style: GoogleFonts.manrope(
+                style: AppFonts.style(
                   fontWeight: FontWeight.w800,
                   fontSize: 22,
                   height: 1.25,
-                  color: AppColors.textPrimary,
+                  color: palette.textPrimary,
                 ),
               ),
               const SizedBox(height: 8),
@@ -212,14 +313,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 children: [
                   Text(
                     'Sold by ',
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontSize: 13,
                       color: AppColors.textSecondary,
                     ),
                   ),
                   Text(
                     'GherTak Store',
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary,
@@ -246,7 +347,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         const SizedBox(width: 4),
                         Text(
                           'Verified',
-                          style: GoogleFonts.manrope(
+                          style: AppFonts.style(
                             fontWeight: FontWeight.w700,
                             fontSize: 10,
                             color: AppColors.successText,
@@ -264,14 +365,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   const SizedBox(width: 4),
                   Text(
                     rating.toStringAsFixed(1),
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontWeight: FontWeight.w800,
                       fontSize: 14,
                     ),
                   ),
                   Text(
                     ' ($reviews)',
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontSize: 13,
                       color: AppColors.textMuted,
                     ),
@@ -279,7 +380,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   const SizedBox(width: 12),
                   Text(
                     '$sold sold',
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontSize: 13,
                       color: AppColors.textMuted,
                     ),
@@ -292,7 +393,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 children: [
                   Text(
                     formatRs(p.displayPrice),
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontWeight: FontWeight.w800,
                       fontSize: 26,
                       color: AppColors.primary,
@@ -304,7 +405,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
                         formatRs(p.price),
-                        style: GoogleFonts.manrope(
+                        style: AppFonts.style(
                           decoration: TextDecoration.lineThrough,
                           color: AppColors.textMuted,
                           fontSize: 14,
@@ -324,7 +425,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       ),
                       child: Text(
                         'Save $savePct%',
-                        style: GoogleFonts.manrope(
+                        style: AppFonts.style(
                           fontWeight: FontWeight.w700,
                           fontSize: 11,
                           color: AppColors.error,
@@ -335,7 +436,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   const Spacer(),
                   Text(
                     inStock ? 'In stock' : 'Out of stock',
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontWeight: FontWeight.w700,
                       fontSize: 13,
                       color: inStock ? AppColors.successText : AppColors.error,
@@ -344,47 +445,122 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 ],
               ),
               const SizedBox(height: 18),
-              Row(
-                children: [
-                  _QtyStepper(
-                    qty: _qty,
-                    enabled: inStock,
-                    onChanged: (v) => setState(() => _qty = v),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: inStock ? () => _addToCart(p) : null,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: const BorderSide(color: AppColors.primary),
-                        minimumSize: const Size.fromHeight(48),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+              if (!inStock)
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: AppColors.gray200,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Out of stock',
+                        style: AppFonts.style(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: AppColors.textMuted,
                         ),
                       ),
-                      child: Text(
-                        'Add to cart',
-                        style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                )
+              else if (inCart)
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: Material(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          _DetailQtyCircle(
+                            icon: Icons.remove,
+                            onTap: () async {
+                              try {
+                                await ref
+                                    .read(cartProvider.notifier)
+                                    .setQty(cartItem!, qtyInCart - 1);
+                              } catch (e) {
+                                if (mounted) showAppToast(context, e);
+                              }
+                            },
+                          ),
+                          Expanded(
+                            child: Text(
+                              '$qtyInCart',
+                              textAlign: TextAlign.center,
+                              style: AppFonts.style(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          _DetailQtyCircle(
+                            icon: Icons.add,
+                            onTap: qtyInCart >= maxStock
+                                ? null
+                                : () async {
+                                    try {
+                                      await ref
+                                          .read(cartProvider.notifier)
+                                          .setQty(cartItem!, qtyInCart + 1);
+                                    } catch (e) {
+                                      if (mounted) showAppToast(context, e);
+                                    }
+                                  },
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: BrandGradientButton(
-                      label: 'Buy now',
-                      onPressed:
-                          inStock ? () => _addToCart(p, buyNow: true) : null,
+                )
+              else
+                Row(
+                  children: [
+                    _QtyStepper(
+                      qty: _qty,
+                      enabled: inStock,
+                      onChanged: (v) => setState(() => _qty = v),
                     ),
-                  ),
-                ],
-              ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => _addToCart(p),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          side: const BorderSide(color: AppColors.primary),
+                          minimumSize: const Size.fromHeight(48),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          'Add to cart',
+                          style: AppFonts.style(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: BrandGradientButton(
+                        label: 'Buy now',
+                        onPressed: () => _addToCart(p, buyNow: true),
+                      ),
+                    ),
+                  ],
+                ),
               const SizedBox(height: 18),
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: palette.surface,
                   borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: palette.border),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -412,8 +588,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Delivery in 45–90 mins within city limits',
-                        style: GoogleFonts.manrope(
+                        'Arrives in 45–90 mins within city limits',
+                        style: AppFonts.style(
                           fontWeight: FontWeight.w600,
                           fontSize: 13,
                           color: AppColors.primaryDark,
@@ -471,14 +647,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         children: [
                           Text(
                             'GherTak Store',
-                            style: GoogleFonts.manrope(
+                            style: AppFonts.style(
                               fontWeight: FontWeight.w800,
                               fontSize: 15,
                             ),
                           ),
                           Text(
                             'Verified seller · $sold+ products sold',
-                            style: GoogleFonts.manrope(
+                            style: AppFonts.style(
                               fontSize: 12,
                               color: AppColors.textMuted,
                             ),
@@ -486,7 +662,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         ],
                       ),
                     ),
-                    const Icon(
+                    Icon(
                       Icons.chevron_right,
                       color: AppColors.textMuted,
                     ),
@@ -514,12 +690,13 @@ class _QtyStepper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
     return Container(
       height: 48,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: p.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: p.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -528,7 +705,7 @@ class _QtyStepper extends StatelessWidget {
             onPressed: !enabled || qty <= 1
                 ? null
                 : () => onChanged(qty - 1),
-            icon: const Icon(Icons.remove, size: 18),
+            icon: Icon(Icons.remove, size: 18, color: p.textPrimary),
             visualDensity: VisualDensity.compact,
           ),
           SizedBox(
@@ -536,15 +713,16 @@ class _QtyStepper extends StatelessWidget {
             child: Text(
               '$qty',
               textAlign: TextAlign.center,
-              style: GoogleFonts.manrope(
+              style: AppFonts.style(
                 fontWeight: FontWeight.w800,
                 fontSize: 15,
+                color: p.textPrimary,
               ),
             ),
           ),
           IconButton(
             onPressed: !enabled ? null : () => onChanged(qty + 1),
-            icon: const Icon(Icons.add, size: 18),
+            icon: Icon(Icons.add, size: 18, color: p.textPrimary),
             visualDensity: VisualDensity.compact,
           ),
         ],
@@ -567,13 +745,42 @@ class _TrustItem extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           label,
-          style: GoogleFonts.manrope(
+          style: AppFonts.style(
             fontWeight: FontWeight.w600,
             fontSize: 11,
-            color: AppColors.textSecondary,
+            color: AppPalette.of(context).textSecondary,
           ),
         ),
       ],
+    );
+  }
+}
+
+class _DetailQtyCircle extends StatelessWidget {
+  const _DetailQtyCircle({required this.icon, this.onTap});
+
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      customBorder: const CircleBorder(),
+      child: Container(
+        width: 28,
+        height: 28,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.9)),
+        ),
+        child: Icon(
+          icon,
+          size: 16,
+          color: Colors.white.withValues(alpha: onTap == null ? 0.5 : 1),
+        ),
+      ),
     );
   }
 }
@@ -597,7 +804,7 @@ class _SectionCard extends StatelessWidget {
         children: [
           Text(
             title,
-            style: GoogleFonts.manrope(
+            style: AppFonts.style(
               fontWeight: FontWeight.w800,
               fontSize: 15,
             ),
@@ -628,7 +835,7 @@ class _DetailRow extends StatelessWidget {
             width: 100,
             child: Text(
               label,
-              style: GoogleFonts.manrope(
+              style: AppFonts.style(
                 fontSize: 13,
                 color: AppColors.textMuted,
               ),
@@ -637,7 +844,7 @@ class _DetailRow extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: GoogleFonts.manrope(
+              style: AppFonts.style(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: AppColors.textPrimary,

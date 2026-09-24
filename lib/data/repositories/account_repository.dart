@@ -65,7 +65,16 @@ class AccountRepository {
           raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{},
     );
     res.ensureSuccess('Could not update profile');
-    final user = UserModel.fromJson(res.data ?? {});
+    var user = UserModel.fromJson(res.data ?? {});
+    // If API omits resolved avatar, keep the image we just uploaded.
+    if ((user.avatar == null || user.avatar!.isEmpty) && image != null) {
+      final uploadedUrl = MediaImage.fromJson(image).best;
+      if (uploadedUrl != null &&
+          uploadedUrl.isNotEmpty &&
+          !uploadedUrl.startsWith('data:')) {
+        user = user.copyWith(avatar: uploadedUrl);
+      }
+    }
     await _storage.saveUserJson(jsonEncode(user.toJson()));
     return user;
   }
@@ -140,6 +149,27 @@ class AccountRepository {
     res.ensureSuccess('Could not send reset code');
   }
 
+  Future<void> verifyResetCode({
+    required String email,
+    required String code,
+  }) async {
+    if (AppConfig.useMockData) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      if (code.trim() != '123456') {
+        throw ApiException('Invalid code. Use 123456 in mock mode.');
+      }
+      return;
+    }
+    final res = await _api.post(
+      ApiEndpoints.verifyResetCode,
+      body: {
+        'email': email,
+        'verification_code': code,
+      },
+    );
+    res.ensureSuccess('Invalid verification code');
+  }
+
   Future<void> resetPassword({
     required String email,
     required String code,
@@ -163,6 +193,18 @@ class AccountRepository {
       },
     );
     res.ensureSuccess('Could not reset password');
+  }
+
+  Future<void> markNotificationRead(int id) async {
+    if (AppConfig.useMockData) return;
+    final res = await _api.post(ApiEndpoints.notificationMarkRead(id));
+    res.ensureSuccess('Could not mark notification as read');
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    if (AppConfig.useMockData) return;
+    final res = await _api.post(ApiEndpoints.notificationMarkAllRead);
+    res.ensureSuccess('Could not mark notifications as read');
   }
 
   // —— Addresses ——
@@ -373,8 +415,125 @@ class AccountRepository {
 
   Future<void> removeFromWishlist(int productId) async {
     if (AppConfig.useMockData) return;
-    final res = await _api.delete(ApiEndpoints.wishlistRemove(productId));
+    final res = await _api.delete(
+      ApiEndpoints.wishlistRemoveByProduct,
+      query: {'product_id': productId},
+    );
     res.ensureSuccess('Could not remove from wishlist');
+  }
+
+  Future<bool> isInWishlist(int productId) async {
+    if (AppConfig.useMockData) return false;
+    try {
+      final res = await _api.get<Map<String, dynamic>>(
+        ApiEndpoints.wishlistCheck(productId),
+        mapData: (raw) =>
+            raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{},
+      );
+      if (!res.success) return false;
+      return res.data?['in_wishlist'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // —— Shop (become a seller) ——
+
+  Future<List<Map<String, dynamic>>> myShops() async {
+    if (AppConfig.useMockData) return const [];
+    final res = await _api.get<List<Map<String, dynamic>>>(
+      ApiEndpoints.shopMyShops,
+      mapData: (raw) {
+        final list = raw is List
+            ? raw
+            : (raw is Map ? (raw['data'] ?? raw['items']) : null);
+        if (list is! List) {
+          if (raw is Map) return [Map<String, dynamic>.from(raw)];
+          return <Map<String, dynamic>>[];
+        }
+        return list
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      },
+    );
+    res.ensureSuccess('Could not load shops');
+    return res.data ?? [];
+  }
+
+  Future<void> submitSupport({
+    required String name,
+    required String email,
+    required String subject,
+    required String message,
+    String category = 'general',
+  }) async {
+    if (AppConfig.useMockData) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      return;
+    }
+    final res = await _api.post(
+      ApiEndpoints.contactSupport,
+      body: {
+        'name': name.trim(),
+        'email': email.trim(),
+        'subject': subject.trim(),
+        'category': category,
+        'message': message.trim(),
+      },
+    );
+    res.ensureSuccess('Could not send message');
+  }
+
+  Future<void> createShop({
+    required String name,
+    required String description,
+    required String streetAddress,
+    required String city,
+    required String state,
+    required String phone,
+    String country = 'Pakistan',
+    String zip = '',
+    String area = '',
+    Map<String, dynamic>? logo,
+    Map<String, dynamic>? coverImage,
+  }) async {
+    if (AppConfig.useMockData) return;
+    final contact = phone.trim().startsWith('+')
+        ? phone.trim()
+        : '+92${phone.trim().replaceFirst(RegExp(r'^0+'), '')}';
+    final res = await _api.post(
+      ApiEndpoints.shopCreate,
+      body: {
+        'name': name.trim(),
+        'description': description.trim(),
+        'logo': logo,
+        'cover_image': coverImage,
+        'address': {
+          'zip': zip,
+          'area': area,
+          'city': city.trim(),
+          'state': state.trim(),
+          'country': country,
+          'street_address': streetAddress.trim(),
+        },
+        'settings': {
+          'contact': contact,
+          'socials': [
+            {'facebook': '', 'youtube': '', 'twitter': '', 'instagram': ''},
+          ],
+          'website': '',
+          'location': [
+            {'lat': '', 'lng': ''},
+          ],
+          'notifications': [
+            {'is_active': true},
+          ],
+        },
+        'notifications': <String, dynamic>{},
+      },
+    );
+    res.ensureSuccess('Could not create shop');
   }
 
   // —— Notifications ——

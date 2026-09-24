@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/location/delivery_location.dart';
+import '../../core/location/geocode_address.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_fonts.dart';
 
 /// Result returned when the user confirms a map pin.
 class MapPickResult {
@@ -26,6 +27,7 @@ class MapPickResult {
 }
 
 /// Full-screen map to choose a delivery pin (OpenStreetMap — no Google key).
+/// Includes website-style “Search an area” type-to-search (Nominatim).
 class MapLocationPickerScreen extends StatefulWidget {
   const MapLocationPickerScreen({
     super.key,
@@ -44,7 +46,9 @@ class MapLocationPickerScreen extends StatefulWidget {
 class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
   late LatLng _pin;
   final _mapController = MapController();
+  final _searchCtrl = TextEditingController();
   bool _busy = false;
+  bool _searching = false;
   String? _hint;
 
   @override
@@ -57,10 +61,23 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _goToGps());
   }
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _goToGps() async {
     try {
       final ok = await AppPermissions.ensureLocation();
-      if (!ok) return;
+      if (!ok) {
+        if (mounted) {
+          setState(() {
+            _hint = 'Location is blocked. Drop a pin or search instead.';
+          });
+        }
+        return;
+      }
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.medium,
@@ -76,6 +93,27 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
     } catch (_) {
       // Keep fallback pin.
     }
+  }
+
+  Future<void> _runSearch() async {
+    final q = _searchCtrl.text.trim();
+    if (q.isEmpty || _searching) return;
+    setState(() {
+      _searching = true;
+      _hint = null;
+    });
+    final found = await geocodeAddressQuery(q);
+    if (!mounted) return;
+    setState(() => _searching = false);
+    if (found == null) {
+      setState(() => _hint = 'No results for “$q”. Try another area.');
+      return;
+    }
+    setState(() {
+      _pin = LatLng(found.lat, found.lng);
+      _hint = found.label;
+    });
+    _mapController.move(_pin, 16);
   }
 
   Future<void> _confirm() async {
@@ -130,18 +168,113 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
       appBar: AppBar(
         title: Text(
           'Choose on map',
-          style: GoogleFonts.manrope(fontWeight: FontWeight.w800),
+          style: AppFonts.style(fontWeight: FontWeight.w800),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'My location',
-            onPressed: _busy ? null : _goToGps,
-            icon: const Icon(Icons.my_location),
-          ),
-        ],
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchCtrl,
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _runSearch(),
+                    style: AppFonts.style(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Search an area',
+                      hintStyle: AppFonts.style(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textMuted,
+                      ),
+                      isDense: true,
+                      prefixIcon: Icon(
+                        Icons.search,
+                        size: 18,
+                        color: AppColors.textMuted,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: AppColors.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: AppColors.border),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(
+                          color: AppColors.checkoutConfirm,
+                        ),
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 44,
+                  child: OutlinedButton(
+                    onPressed: _searching ? null : _runSearch,
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: AppColors.border),
+                      foregroundColor: AppColors.textBody,
+                      backgroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: _searching
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(
+                            'Search',
+                            style: AppFonts.style(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Material(
+                  color: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: BorderSide(color: AppColors.border),
+                  ),
+                  child: InkWell(
+                    onTap: _busy ? null : _goToGps,
+                    borderRadius: BorderRadius.circular(10),
+                    child: const SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Icon(
+                        Icons.near_me_outlined,
+                        color: AppColors.checkoutConfirm,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
           if (_hint != null)
             Material(
               color: AppColors.primarySoft,
@@ -155,7 +288,7 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
                     Expanded(
                       child: Text(
                         _hint!,
-                        style: GoogleFonts.manrope(fontSize: 12),
+                        style: AppFonts.style(fontSize: 12),
                       ),
                     ),
                   ],
@@ -220,11 +353,11 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
                             ],
                           ),
                           child: Text(
-                            'Tap the map to place your delivery pin.\n'
+                            'Search an area, or tap the map to place your delivery pin.\n'
                             '${_pin.latitude.toStringAsFixed(5)}, '
                             '${_pin.longitude.toStringAsFixed(5)}',
                             textAlign: TextAlign.center,
-                            style: GoogleFonts.manrope(
+                            style: AppFonts.style(
                               fontSize: 12,
                               height: 1.4,
                               color: AppColors.textSecondary,
@@ -243,7 +376,7 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
                           ),
                           child: Text(
                             _busy ? 'Saving…' : 'Use this location',
-                            style: GoogleFonts.manrope(
+                            style: AppFonts.style(
                               fontWeight: FontWeight.w800,
                               color: Colors.white,
                             ),

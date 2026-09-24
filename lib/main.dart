@@ -9,6 +9,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'constants/figma_assets.dart';
 import 'core/location/delivery_location.dart';
 import 'core/location/delivery_location_provider.dart';
+import 'core/theme/app_colors.dart';
+import 'core/theme/app_fonts.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_mode_provider.dart';
 import 'router/app_router.dart';
@@ -17,8 +19,8 @@ Future<void> main() async {
   await runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // Allow font fetch; PlatformDispatcher.onError prevents process kill if TLS fails.
-    GoogleFonts.config.allowRuntimeFetching = true;
+    // Bundled Manrope assets — do not depend on network font fetch.
+    GoogleFonts.config.allowRuntimeFetching = false;
 
     FlutterError.onError = (details) {
       FlutterError.presentError(details);
@@ -103,6 +105,21 @@ class _GherTakAppState extends ConsumerState<GherTakApp> {
       darkTheme: AppTheme.dark,
       themeMode: themeMode,
       routerConfig: router,
+      builder: (context, child) {
+        // Keep AppColors text tokens in sync with Material brightness.
+        AppColors.bindBrightness(Theme.of(context).brightness);
+        return DefaultTextStyle(
+          style: AppFonts.style(
+            color: AppColors.textPrimary,
+            fontSize: AppFonts.bodyMd,
+            fontWeight: FontWeight.w500,
+          ),
+          child: IconTheme(
+            data: IconThemeData(color: AppColors.textSecondary),
+            child: child ?? const SizedBox.shrink(),
+          ),
+        );
+      },
     );
   }
 }

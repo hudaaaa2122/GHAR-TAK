@@ -6,9 +6,32 @@ import 'package:go_router/go_router.dart';
 import '../../constants/app_routes.dart';
 import '../../core/network/api_response.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_fonts.dart';
 import '../../data/repositories/auth_repository.dart';
-import '../../shared/brand_widgets.dart';
+import '../../shared/widgets.dart';
 import '../providers.dart';
+
+bool _isValidEmail(String value) {
+  final email = value.trim();
+  if (email.isEmpty) return false;
+  return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
+}
+
+InputDecoration _authFieldDecoration({
+  required String hint,
+  required bool hasError,
+  Widget? suffixIcon,
+  String? labelText,
+}) {
+  return InputDecoration(
+    hintText: hint,
+    labelText: labelText,
+    suffixIcon: suffixIcon,
+    // Non-null errorText triggers red error borders from theme (no inline text).
+    errorText: hasError ? '' : null,
+    errorStyle: const TextStyle(height: 0, fontSize: 0),
+  );
+}
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -22,7 +45,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _password = TextEditingController();
   bool _loading = false;
   bool _obscure = true;
-  String? _error;
+  bool _emailError = false;
+  bool _passwordError = false;
 
   @override
   void dispose() {
@@ -30,7 +54,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     _password.dispose();
     super.dispose();
   }
-
 
   Future<void> _forgotPassword() async {
     final emailCtrl = TextEditingController(text: _email.text.trim());
@@ -61,37 +84,167 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (ok != true || !mounted) return;
     final email = emailCtrl.text.trim();
     if (email.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter your email')),
-      );
+      showAppToast(context, 'Please enter your email');
+      return;
+    }
+    if (!_isValidEmail(email)) {
+      showAppToast(context, 'Please enter a valid email');
       return;
     }
     try {
       await ref.read(accountRepositoryProvider).forgotPassword(email);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('If the email exists, a reset code was sent'),
-        ),
+      showAppToast(
+        context,
+        'If the email exists, a reset code was sent',
+        isError: false,
       );
+      await _completePasswordReset(email);
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
+      showAppToast(context, e.message);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
+      showAppToast(context, e);
     }
   }
 
-  Future<void> _submit() async {
+  /// Website ForgotPasswordModal → OtpVerifyModal → reset-password.
+  Future<void> _completePasswordReset(String email) async {
+    final codeCtrl = TextEditingController();
+    final passCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    final submitted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter reset code'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'We sent a verification code to $email',
+                style: AppFonts.style(fontSize: 13, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: codeCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Verification code',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: passCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'New password',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: confirmCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Confirm password',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reset password'),
+          ),
+        ],
+      ),
+    );
+    if (submitted != true || !mounted) return;
+
+    final code = codeCtrl.text.trim();
+    final pass = passCtrl.text;
+    final confirm = confirmCtrl.text;
+    if (code.isEmpty || pass.isEmpty || confirm.isEmpty) {
+      showAppToast(context, 'Fill in code and both password fields');
+      return;
+    }
+    if (pass != confirm) {
+      showAppToast(context, 'Passwords do not match');
+      return;
+    }
+    if (pass.length < 6) {
+      showAppToast(context, 'Password must be at least 6 characters');
+      return;
+    }
+
+    try {
+      final repo = ref.read(accountRepositoryProvider);
+      await repo.verifyResetCode(email: email, code: code);
+      await repo.resetPassword(
+        email: email,
+        code: code,
+        newPassword: pass,
+        confirmPassword: confirm,
+      );
+      if (!mounted) return;
+      showAppToast(
+        context,
+        'Password updated. You can sign in now.',
+        isError: false,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.message);
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e);
+    }
+  }
+
+  bool _validateLogin() {
+    final email = _email.text.trim();
+    final password = _password.text;
+    var emailErr = false;
+    var passwordErr = false;
+    String? message;
+
+    if (email.isEmpty && password.isEmpty) {
+      emailErr = true;
+      passwordErr = true;
+      message = 'Please enter your email and password';
+    } else if (email.isEmpty) {
+      emailErr = true;
+      message = 'Please enter your email';
+    } else if (!_isValidEmail(email)) {
+      emailErr = true;
+      message = 'Please enter a valid email';
+    } else if (password.isEmpty) {
+      passwordErr = true;
+      message = 'Please enter your password';
+    }
+
     setState(() {
-      _loading = true;
-      _error = null;
+      _emailError = emailErr;
+      _passwordError = passwordErr;
     });
+
+    if (message != null) {
+      showAppToast(context, message);
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _submit() async {
+    if (!_validateLogin()) return;
+    setState(() => _loading = true);
     try {
       await ref.read(authStateProvider.notifier).login(
             _email.text.trim(),
@@ -102,7 +255,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         if (mounted) context.go(AppRoutes.home);
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (!mounted) return;
+      setState(() {
+        _emailError = true;
+        _passwordError = true;
+      });
+      final msg = friendlyUserMessage(e);
+      final lower = msg.toLowerCase();
+      showAppToast(
+        context,
+        lower.contains('invalid') ||
+                lower.contains('incorrect') ||
+                lower.contains('credential') ||
+                lower.contains('password') ||
+                lower.contains('email')
+            ? msg
+            : 'Invalid email or password',
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -111,17 +280,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _googleSignIn() async {
     setState(() {
       _loading = true;
-      _error = null;
+      _emailError = false;
+      _passwordError = false;
     });
     try {
       await ref.read(authStateProvider.notifier).loginWithGoogle();
       if (!mounted) return;
-      // Navigate on next frame so login UI can dispose cleanly first.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) context.go(AppRoutes.home);
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (!mounted) return;
+      showAppToast(context, e);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -140,12 +310,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 const GherTakLogo(
                   variant: GherTakLogoVariant.onDark,
                   compact: true,
-                  height: 56,
+                  height: 52,
                 ),
                 const Spacer(),
                 Text(
                   'Welcome Back!',
-                  style: TextStyle(
+                  style: AppFonts.style(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,
                     fontSize: 28,
@@ -154,7 +324,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 const SizedBox(height: 4),
                 Text(
                   'Sign in to continue',
-                  style: TextStyle(
+                  style: AppFonts.style(
                     color: Colors.white.withValues(alpha: 0.9),
                     fontWeight: FontWeight.w500,
                     fontSize: 14,
@@ -170,7 +340,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               children: [
                 Text(
                   'EMAIL',
-                  style: TextStyle(
+                  style: AppFonts.style(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textSecondary,
@@ -181,14 +351,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 TextField(
                   controller: _email,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    hintText: 'you@example.com',
+                  onChanged: (_) {
+                    if (_emailError) setState(() => _emailError = false);
+                  },
+                  decoration: _authFieldDecoration(
+                    hint: 'you@example.com',
+                    hasError: _emailError,
                   ),
                 ),
                 const SizedBox(height: 18),
                 Text(
                   'PASSWORD',
-                  style: TextStyle(
+                  style: AppFonts.style(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textSecondary,
@@ -199,8 +373,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 TextField(
                   controller: _password,
                   obscureText: _obscure,
-                  decoration: InputDecoration(
-                    hintText: '••••••••',
+                  onChanged: (_) {
+                    if (_passwordError) setState(() => _passwordError = false);
+                  },
+                  decoration: _authFieldDecoration(
+                    hint: '••••••••',
+                    hasError: _passwordError,
                     suffixIcon: IconButton(
                       onPressed: () => setState(() => _obscure = !_obscure),
                       icon: Icon(
@@ -218,7 +396,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     onPressed: _forgotPassword,
                     child: Text(
                       'Forgot Password?',
-                      style: TextStyle(
+                      style: AppFonts.style(
                         color: AppColors.primary,
                         fontWeight: FontWeight.w700,
                         fontSize: 13,
@@ -226,10 +404,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                 ),
-                if (_error != null) ...[
-                  Text(_error!, style: const TextStyle(color: AppColors.error)),
-                  const SizedBox(height: 8),
-                ],
                 BrandGradientButton(
                   label: _loading ? 'Signing in…' : 'Sign In',
                   onPressed: _loading ? null : _submit,
@@ -237,18 +411,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 const SizedBox(height: 22),
                 Row(
                   children: [
-                    const Expanded(child: Divider(color: AppColors.border)),
+                    Expanded(child: Divider(color: AppColors.border)),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Text(
                         'or sign in with',
-                        style: TextStyle(
+                        style: AppFonts.style(
                           color: AppColors.textMuted,
                           fontSize: 12,
                         ),
                       ),
                     ),
-                    const Expanded(child: Divider(color: AppColors.border)),
+                    Expanded(child: Divider(color: AppColors.border)),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -262,7 +436,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   children: [
                     Text(
                       'New to Gher Tak? ',
-                      style: TextStyle(
+                      style: AppFonts.style(
                         color: AppColors.textMuted,
                         fontSize: 13,
                       ),
@@ -271,7 +445,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       onTap: () => context.push(AppRoutes.register),
                       child: Text(
                         'Register Now!',
-                        style: TextStyle(
+                        style: AppFonts.style(
                           color: AppColors.primary,
                           fontWeight: FontWeight.w800,
                           fontSize: 13,
@@ -303,7 +477,11 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   bool _loading = false;
-  String? _error;
+  bool _nameError = false;
+  bool _emailError = false;
+  bool _phoneError = false;
+  bool _passwordError = false;
+  bool _confirmError = false;
 
   @override
   void dispose() {
@@ -315,11 +493,69 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  bool _validateRegister() {
+    final name = _name.text.trim();
+    final email = _email.text.trim();
+    final phone = _phone.text.trim();
+    final password = _password.text;
+    final confirm = _confirm.text;
+
+    var nameErr = false;
+    var emailErr = false;
+    var phoneErr = false;
+    var passwordErr = false;
+    var confirmErr = false;
+    String? message;
+
+    if (name.isEmpty) {
+      nameErr = true;
+      message ??= 'Please enter your full name';
+    }
+    if (phone.isEmpty) {
+      phoneErr = true;
+      message ??= 'Please enter your phone number';
+    }
+    if (email.isEmpty) {
+      emailErr = true;
+      message ??= 'Please enter your email';
+    } else if (!_isValidEmail(email)) {
+      emailErr = true;
+      message ??= 'Please enter a valid email';
+    }
+    if (password.isEmpty) {
+      passwordErr = true;
+      message ??= 'Please enter a password';
+    } else if (password.length < 6) {
+      passwordErr = true;
+      message ??= 'Password must be at least 6 characters';
+    }
+    if (confirm.isEmpty) {
+      confirmErr = true;
+      message ??= 'Please confirm your password';
+    } else if (password != confirm) {
+      passwordErr = true;
+      confirmErr = true;
+      message ??= 'Passwords do not match';
+    }
+
     setState(() {
-      _loading = true;
-      _error = null;
+      _nameError = nameErr;
+      _emailError = emailErr;
+      _phoneError = phoneErr;
+      _passwordError = passwordErr;
+      _confirmError = confirmErr;
     });
+
+    if (message != null) {
+      showAppToast(context, message);
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _submit() async {
+    if (!_validateRegister()) return;
+    setState(() => _loading = true);
     try {
       await ref.read(authRepositoryProvider).register(
             name: _name.text.trim(),
@@ -332,26 +568,24 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         context.push(AppRoutes.verify, extra: _email.text.trim());
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (!mounted) return;
+      showAppToast(context, e);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _googleSignIn() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() => _loading = true);
     try {
       await ref.read(authStateProvider.notifier).loginWithGoogle();
       if (!mounted) return;
-      // Navigate on next frame so login UI can dispose cleanly first.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) context.go(AppRoutes.home);
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (!mounted) return;
+      showAppToast(context, e);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -360,7 +594,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   Widget _label(String text) {
     return Text(
       text.toUpperCase(),
-      style: TextStyle(
+      style: AppFonts.style(
         fontSize: 11,
         fontWeight: FontWeight.w700,
         color: AppColors.textSecondary,
@@ -382,12 +616,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 const GherTakLogo(
                   variant: GherTakLogoVariant.onDark,
                   compact: true,
-                  height: 56,
+                  height: 52,
                 ),
                 const Spacer(),
                 Text(
                   'Create Account',
-                  style: TextStyle(
+                  style: AppFonts.style(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,
                     fontSize: 28,
@@ -395,8 +629,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Fast delivery starts here',
-                  style: TextStyle(
+                  'Fast shopping starts here',
+                  style: AppFonts.style(
                     color: Colors.white.withValues(alpha: 0.9),
                     fontWeight: FontWeight.w500,
                     fontSize: 14,
@@ -414,7 +648,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: _name,
-                  decoration: const InputDecoration(hintText: 'Ahmed Ali'),
+                  onChanged: (_) {
+                    if (_nameError) setState(() => _nameError = false);
+                  },
+                  decoration: _authFieldDecoration(
+                    hint: 'Ahmed Ali',
+                    hasError: _nameError,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 _label('Phone Number'),
@@ -422,7 +662,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 TextField(
                   controller: _phone,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(hintText: '+92 3XX XXXXXXX'),
+                  onChanged: (_) {
+                    if (_phoneError) setState(() => _phoneError = false);
+                  },
+                  decoration: _authFieldDecoration(
+                    hint: '+92 3XX XXXXXXX',
+                    hasError: _phoneError,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 _label('Email Address'),
@@ -430,7 +676,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 TextField(
                   controller: _email,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(hintText: 'you@example.com'),
+                  onChanged: (_) {
+                    if (_emailError) setState(() => _emailError = false);
+                  },
+                  decoration: _authFieldDecoration(
+                    hint: 'you@example.com',
+                    hasError: _emailError,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Row(
@@ -445,7 +697,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           TextField(
                             controller: _password,
                             obscureText: true,
-                            decoration: const InputDecoration(hintText: '••••••••'),
+                            onChanged: (_) {
+                              if (_passwordError) {
+                                setState(() => _passwordError = false);
+                              }
+                            },
+                            decoration: _authFieldDecoration(
+                              hint: '••••••••',
+                              hasError: _passwordError,
+                            ),
                           ),
                         ],
                       ),
@@ -460,7 +720,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           TextField(
                             controller: _confirm,
                             obscureText: true,
-                            decoration: const InputDecoration(hintText: '••••••••'),
+                            onChanged: (_) {
+                              if (_confirmError) {
+                                setState(() => _confirmError = false);
+                              }
+                            },
+                            decoration: _authFieldDecoration(
+                              hint: '••••••••',
+                              hasError: _confirmError,
+                            ),
                           ),
                         ],
                       ),
@@ -470,16 +738,18 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 const SizedBox(height: 16),
                 Text.rich(
                   TextSpan(
-                    style: const TextStyle(
+                    style: AppFonts.style(
                       fontSize: 12,
                       color: AppColors.textMuted,
                       height: 1.4,
                     ),
                     children: [
-                      const TextSpan(text: 'By creating an account you agree to our '),
+                      const TextSpan(
+                        text: 'By creating an account you agree to our ',
+                      ),
                       TextSpan(
                         text: 'Terms',
-                        style: const TextStyle(
+                        style: AppFonts.style(
                           fontWeight: FontWeight.w700,
                           color: AppColors.primary,
                           fontSize: 12,
@@ -490,7 +760,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       const TextSpan(text: ' & '),
                       TextSpan(
                         text: 'Privacy Policy',
-                        style: const TextStyle(
+                        style: AppFonts.style(
                           fontWeight: FontWeight.w700,
                           color: AppColors.primary,
                           fontSize: 12,
@@ -501,10 +771,6 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     ],
                   ),
                 ),
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(_error!, style: const TextStyle(color: AppColors.error)),
-                ],
                 const SizedBox(height: 20),
                 BrandGradientButton(
                   label: _loading ? 'Please wait…' : 'Create Account',
@@ -513,18 +779,18 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 const SizedBox(height: 22),
                 Row(
                   children: [
-                    const Expanded(child: Divider(color: AppColors.border)),
+                    Expanded(child: Divider(color: AppColors.border)),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Text(
                         'or continue with',
-                        style: TextStyle(
+                        style: AppFonts.style(
                           color: AppColors.textMuted,
                           fontSize: 12,
                         ),
                       ),
                     ),
-                    const Expanded(child: Divider(color: AppColors.border)),
+                    Expanded(child: Divider(color: AppColors.border)),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -538,7 +804,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   children: [
                     Text(
                       'Already registered? ',
-                      style: TextStyle(
+                      style: AppFonts.style(
                         color: AppColors.textMuted,
                         fontSize: 13,
                       ),
@@ -547,7 +813,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       onTap: () => context.push(AppRoutes.login),
                       child: Text(
                         'Sign In',
-                        style: TextStyle(
+                        style: AppFonts.style(
                           color: AppColors.primary,
                           fontWeight: FontWeight.w800,
                           fontSize: 13,
@@ -577,7 +843,7 @@ class VerifyScreen extends ConsumerStatefulWidget {
 class _VerifyScreenState extends ConsumerState<VerifyScreen> {
   final _code = TextEditingController();
   bool _loading = false;
-  String? _error;
+  bool _codeError = false;
 
   @override
   void dispose() {
@@ -586,19 +852,27 @@ class _VerifyScreenState extends ConsumerState<VerifyScreen> {
   }
 
   Future<void> _submit() async {
+    final code = _code.text.trim();
+    if (code.isEmpty) {
+      setState(() => _codeError = true);
+      showAppToast(context, 'Please enter the verification code');
+      return;
+    }
     setState(() {
       _loading = true;
-      _error = null;
+      _codeError = false;
     });
     try {
       final user = await ref.read(authRepositoryProvider).verifyRegistration(
             email: widget.email,
-            code: _code.text.trim(),
+            code: code,
           );
       ref.read(authStateProvider.notifier).setUser(user);
       if (mounted) context.go(AppRoutes.home);
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (!mounted) return;
+      setState(() => _codeError = true);
+      showAppToast(context, e);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -613,23 +887,21 @@ class _VerifyScreenState extends ConsumerState<VerifyScreen> {
         children: [
           Text(
             'Enter the verification code sent to ${widget.email}',
-            style: TextStyle(),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Mock mode code: 123456',
-            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            style: AppFonts.style(),
           ),
           const SizedBox(height: 16),
           TextField(
             controller: _code,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Verification code'),
+            onChanged: (_) {
+              if (_codeError) setState(() => _codeError = false);
+            },
+            decoration: _authFieldDecoration(
+              hint: 'Verification code',
+              labelText: 'Verification code',
+              hasError: _codeError,
+            ),
           ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(_error!, style: const TextStyle(color: AppColors.error)),
-          ],
           const SizedBox(height: 20),
           BrandGradientButton(
             label: _loading ? 'Verifying…' : 'Verify & continue',
@@ -640,4 +912,3 @@ class _VerifyScreenState extends ConsumerState<VerifyScreen> {
     );
   }
 }
-

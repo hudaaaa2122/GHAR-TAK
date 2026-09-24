@@ -5,6 +5,7 @@ import 'package:smooth_page_indicator/smooth_page_indicator.dart';
 import '../../constants/app_routes.dart';
 import '../../constants/figma_assets.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_fonts.dart';
 import '../../shared/brand_widgets.dart';
 
 /// Splash — Figma node 318:6167. Hold 4s so splash is readable (no white flash).
@@ -101,11 +102,11 @@ class _IntroScreenState extends State<IntroScreen> {
         curve: Curves.easeOutCubic,
       );
     } else {
-      context.go(AppRoutes.login);
+      context.go(AppRoutes.home);
     }
   }
 
-  void _skip() => context.go(AppRoutes.login);
+  void _skip() => context.go(AppRoutes.home);
 
   @override
   Widget build(BuildContext context) {
@@ -121,7 +122,7 @@ class _IntroScreenState extends State<IntroScreen> {
                 const GherTakLogo(
                   variant: GherTakLogoVariant.onDark,
                   compact: true,
-                  height: 56,
+                  height: 52,
                 ),
                 const Spacer(),
                 TextButton(
@@ -132,7 +133,7 @@ class _IntroScreenState extends State<IntroScreen> {
                   ),
                   child: Text(
                     'SKIP',
-                    style: TextStyle(
+                    style: AppFonts.style(
                       fontWeight: FontWeight.w700,
                       fontSize: 13,
                       letterSpacing: 0.8,
@@ -181,7 +182,7 @@ class _IntroScreenState extends State<IntroScreen> {
                       Text(
                         page.title,
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: AppFonts.style(
                           fontWeight: FontWeight.w800,
                           fontSize: 24,
                           color: AppColors.textPrimary,
@@ -191,7 +192,7 @@ class _IntroScreenState extends State<IntroScreen> {
                       Text(
                         page.subtitle,
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: AppFonts.style(
                           fontSize: 14,
                           height: 1.45,
                           color: AppColors.textMuted,
@@ -220,7 +221,7 @@ class _IntroScreenState extends State<IntroScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
             child: BrandGradientButton(
-              label: _index == _pages.length - 1 ? 'Get Started' : 'Next',
+              label: _index == _pages.length - 1 ? 'Start shopping' : 'Next',
               onPressed: _next,
             ),
           ),
@@ -234,7 +235,7 @@ class _IntroScreenState extends State<IntroScreen> {
               children: [
                 Text(
                   'Already have an account? ',
-                  style: TextStyle(
+                  style: AppFonts.style(
                     color: AppColors.textMuted,
                     fontSize: 13,
                   ),
@@ -243,7 +244,7 @@ class _IntroScreenState extends State<IntroScreen> {
                   onTap: () => context.go(AppRoutes.login),
                   child: Text(
                     'Sign In',
-                    style: TextStyle(
+                    style: AppFonts.style(
                       color: AppColors.primary,
                       fontWeight: FontWeight.w800,
                       fontSize: 13,

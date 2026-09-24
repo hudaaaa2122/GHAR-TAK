@@ -1,7 +1,9 @@
-import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+export '../../shared/app_toast.dart'
+    show showAppToast, AppToastKind, friendlyUserMessage;
 
 /// Startup permission prompts + delivery location label used on Home.
 class DeliveryLocation {
@@ -55,8 +57,14 @@ class AppPermissions {
   }
 
   static Future<bool> ensureCamera() async {
-    final status = await Permission.camera.request();
-    return status.isGranted || status.isLimited;
+    var status = await Permission.camera.status;
+    if (status.isGranted || status.isLimited) return true;
+    status = await Permission.camera.request();
+    if (status.isGranted || status.isLimited) return true;
+    if (status.isPermanentlyDenied) {
+      await openAppSettings();
+    }
+    return false;
   }
 
   static Future<bool> ensureMicrophone() async {
@@ -67,6 +75,19 @@ class AppPermissions {
   static Future<bool> ensureLocation() async {
     final status = await Permission.locationWhenInUse.request();
     return status.isGranted || status.isLimited;
+  }
+
+  static Future<bool> ensurePhotos() async {
+    try {
+      final photos = await Permission.photos.request();
+      if (photos.isGranted || photos.isLimited) return true;
+    } catch (_) {}
+    try {
+      final storage = await Permission.storage.request();
+      if (storage.isGranted || storage.isLimited) return true;
+    } catch (_) {}
+    // ImagePicker may still prompt natively; allow attempt.
+    return true;
   }
 }
 
@@ -136,86 +157,4 @@ Future<DeliveryLocation> resolveDeliveryLocation() async {
   } catch (_) {
     return DeliveryLocation.fallback;
   }
-}
-
-/// Top-right toast for ~3 seconds (API / validation errors).
-void showAppToast(
-  BuildContext context,
-  String message, {
-  Duration duration = const Duration(seconds: 3),
-  bool isError = true,
-}) {
-  final text = message.trim();
-  if (text.isEmpty) return;
-
-  final overlay = Overlay.maybeOf(context);
-  if (overlay == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text), duration: duration),
-    );
-    return;
-  }
-
-  late OverlayEntry entry;
-  entry = OverlayEntry(
-    builder: (ctx) {
-      final top = MediaQuery.paddingOf(ctx).top + 12;
-      return Positioned(
-        top: top,
-        right: 12,
-        left: 72,
-        child: Material(
-          color: Colors.transparent,
-          child: Align(
-            alignment: Alignment.topRight,
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 220),
-              builder: (_, v, child) => Opacity(
-                opacity: v,
-                child: Transform.translate(
-                  offset: Offset(12 * (1 - v), 0),
-                  child: child,
-                ),
-              ),
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 320),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: isError
-                      ? const Color(0xFFB3261E)
-                      : const Color(0xFF1B6B4A),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Text(
-                  text,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                    height: 1.35,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    },
-  );
-
-  overlay.insert(entry);
-  Future<void>.delayed(duration, () {
-    try {
-      entry.remove();
-    } catch (_) {}
-  });
 }

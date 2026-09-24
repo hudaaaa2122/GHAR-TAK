@@ -34,6 +34,8 @@ class AppRoutes {
   static const String orders = '/orders';
   static const String orderDetail = '/orders/:id';
   static const String tracking = '/tracking/:id';
+  /// Guest-friendly track lookup (website `/track-order`).
+  static const String trackLookup = '/track-order';
 
   // —— Account ——
   static const String menu = '/menu';
@@ -49,6 +51,9 @@ class AppRoutes {
   static const String about = '/about';
   static const String contact = '/contact';
   static const String faq = '/faq';
+  static const String support = '/support';
+  static const String siteMap = '/site-map';
+  static const String team = '/team';
   static const String terms = '/terms';
   static const String privacy = '/privacy';
   static const String seller = '/seller';
@@ -89,6 +94,9 @@ class AppRoutes {
     String? barcode,
     String? endpoint,
     int? categoryId,
+    bool categoryIsRoot = false,
+    /// Website browse-tiles: filter with `category_id` (not category.id / root_id).
+    bool categoryIdKey = false,
     int? manufacturerId,
   }) {
     final params = <String, String>{
@@ -96,6 +104,8 @@ class AppRoutes {
       if (barcode != null && barcode.isNotEmpty) 'barcode': barcode,
       if (endpoint != null && endpoint.isNotEmpty) 'endpoint': endpoint,
       if (categoryId != null) 'categoryId': '$categoryId',
+      if (categoryId != null && categoryIsRoot) 'categoryRoot': '1',
+      if (categoryId != null && categoryIdKey) 'categoryIdKey': '1',
       if (manufacturerId != null) 'manufacturerId': '$manufacturerId',
     };
     if (params.isEmpty) return products;

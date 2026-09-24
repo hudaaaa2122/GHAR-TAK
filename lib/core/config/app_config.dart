@@ -22,13 +22,19 @@ class AppConfig {
 
   /// Fallback only — prefer [settingsProvider] / live `/settings` values.
   static const String announcement =
-      'Free delivery on orders over Rs. 3,000 · Cash on delivery available';
+      'Orders over Rs. 3,000 unlock complimentary shipping · Pay on arrival available';
 
   /// Fallback free-shipping threshold when settings API is unavailable.
   static const double defaultFreeShippingAmount = 3000;
 
   static const String defaultVertical = 'grocery';
   static const String currencySymbol = 'Rs.';
+
+  /// Customer website origin (JazzCash / PayFast Next.js API routes).
+  static const String websiteBaseUrl = String.fromEnvironment(
+    'WEBSITE_BASE_URL',
+    defaultValue: 'https://ghertak.com',
+  );
 
   /// Web OAuth client ID — must match backend `GOOGLE_CLIENT_ID` (used as
   /// `serverClientId` so Android/iOS receive an `id_token` for `/google`).

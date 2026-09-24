@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Web OAuth client ID — used by google_sign_in as default_web_client_id.
+         Must match backend GOOGLE_CLIENT_ID so the ID token audience verifies. -->
+    <string name="default_web_client_id">375898179358-pnst0277v4jugtu5bn2t6t1pom6g8edt.apps.googleusercontent.com</string>
+    <string name="app_name">Gher Tak</string>
+</resources>

@@ -3,6 +3,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import '../constants/figma_assets.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/app_fonts.dart';
 
 enum GherTakLogoVariant {
   /// Full color logo.
@@ -19,8 +20,7 @@ TextStyle _manrope({
   double height = 1.0,
   double letterSpacing = 0,
 }) {
-  // Avoid GoogleFonts runtime HTTP (emulator TLS often fails and throws uncaught).
-  return TextStyle(
+  return AppFonts.style(
     fontWeight: fontWeight,
     fontSize: fontSize,
     color: color,
@@ -29,8 +29,7 @@ TextStyle _manrope({
   );
 }
 
-/// Brand lockup — same composition as splash center (house mark + "Gher Tak").
-/// Intro/Login/Register: solid white. Elsewhere: teal mark + black text.
+/// Brand lockup — website MainLogo by default (roof + "Gher Tak" + tagline).
 class GherTakLogo extends StatelessWidget {
   const GherTakLogo({
     super.key,
@@ -54,22 +53,44 @@ class GherTakLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final onDark = variant == GherTakLogoVariant.onDark;
-    // Figma Intro/Login Group ≈ 137×61.
-    final logoH = height ?? markHeight ?? (compact ? 56.0 : 64.0);
+    // Auth headers use ~52; home compact strip stays smaller via height:.
+    final logoH = height ?? markHeight ?? (compact ? 40.0 : 56.0);
+    // Prefer dedicated white asset; ColorFilter guarantees pure white on teal headers
+    // (website white PNG still has teal in the house mark).
     final asset =
-        onDark ? FigmaAssets.logoStackedWhite : FigmaAssets.logoStacked;
+        onDark ? FigmaAssets.websiteLogoWhite : FigmaAssets.websiteLogo;
 
-    return Image.asset(
+    Widget logo = Image.asset(
       asset,
       height: logoH,
       fit: BoxFit.contain,
       alignment: Alignment.centerLeft,
       filterQuality: FilterQuality.high,
-      errorBuilder: (_, __, ___) => _LockupSvgFallback(
-        onDark: onDark,
-        height: logoH,
-      ),
+      errorBuilder: (_, __, ___) {
+        if (!onDark) {
+          return SvgPicture.asset(
+            FigmaAssets.websiteLogoSvg,
+            height: logoH,
+            fit: BoxFit.contain,
+            alignment: Alignment.centerLeft,
+            placeholderBuilder: (_) => _LockupSvgFallback(
+              onDark: false,
+              height: logoH,
+            ),
+          );
+        }
+        return _LockupSvgFallback(onDark: true, height: logoH);
+      },
     );
+
+    if (onDark) {
+      logo = ColorFiltered(
+        colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+        child: logo,
+      );
+    }
+
+    return logo;
   }
 }
 
@@ -109,48 +130,9 @@ class _LockupSvgFallback extends StatelessWidget {
   }
 }
 
-/// Full splash PNG (blobs + teal mark + "Gher Tak"). Offline-safe, no GoogleFonts.
+/// Splash: corner blobs (Figma) + current website MainLogo centered.
 class SplashBrandCanvas extends StatelessWidget {
   const SplashBrandCanvas({super.key});
-
-  static const _paths = [
-    FigmaAssets.splash,
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return const ColoredBox(
-      color: Color(0xFFF7F7F7),
-      child: _SplashPngChain(index: 0),
-    );
-  }
-}
-
-class _SplashPngChain extends StatelessWidget {
-  const _SplashPngChain({required this.index});
-
-  final int index;
-
-  @override
-  Widget build(BuildContext context) {
-    if (index >= SplashBrandCanvas._paths.length) {
-      return const _SplashSvgLayers();
-    }
-    return Image.asset(
-      SplashBrandCanvas._paths[index],
-      fit: BoxFit.cover,
-      alignment: Alignment.center,
-      width: double.infinity,
-      height: double.infinity,
-      filterQuality: FilterQuality.high,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => _SplashPngChain(index: index + 1),
-    );
-  }
-}
-
-class _SplashSvgLayers extends StatelessWidget {
-  const _SplashSvgLayers();
 
   static const _designW = 440.0;
   static const _designH = 956.0;
@@ -176,6 +158,7 @@ class _SplashSvgLayers extends StatelessWidget {
                 ),
               ),
             ),
+            // Top-left blob (overflows off-screen like Figma)
             Positioned(
               left: -311 * sx,
               top: -433 * sy,
@@ -187,6 +170,7 @@ class _SplashSvgLayers extends StatelessWidget {
                 allowDrawingOutsideViewBox: true,
               ),
             ),
+            // Bottom-right blob
             Positioned(
               left: -39.32 * sx,
               top: 602.53 * sy,
@@ -200,34 +184,10 @@ class _SplashSvgLayers extends StatelessWidget {
             ),
             Center(
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 48 * sx),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 100 * sx,
-                      height: 72 * sx,
-                      child: SvgPicture.asset(
-                        FigmaAssets.logoMark,
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-                    SizedBox(width: 8 * sx),
-                    Flexible(
-                      child: Text(
-                        'Gher Tak',
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: (46.0 * sx).clamp(28.0, 48.0),
-                          height: 1.0,
-                          letterSpacing: -0.7,
-                          color: Colors.black,
-                        ),
-                      ),
-                    ),
-                  ],
+                padding: EdgeInsets.symmetric(horizontal: 40 * sx),
+                child: GherTakLogo(
+                  height: (52 * sx).clamp(44.0, 64.0),
+                  compact: true,
                 ),
               ),
             ),
@@ -266,7 +226,7 @@ class BrandCurveHeader extends StatelessWidget {
     final topInset = MediaQuery.paddingOf(context).top;
     final ratio = compact ? 0.36 : 0.46;
     final resolvedHeight = height ??
-        ((w * ratio).clamp(compact ? 140.0 : 168.0, compact ? 180.0 : 220.0) +
+        ((w * ratio).clamp(compact ? 148.0 : 168.0, compact ? 196.0 : 220.0) +
             topInset * 0.35);
     final radius = curveDepth ?? BrandHeaderShapeClipper.radiusForWidth(w);
 
@@ -373,13 +333,13 @@ class BrandGradientButton extends StatelessWidget {
         child: Ink(
           height: 54,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
             gradient: AppColors.buttonGradient,
             boxShadow: [
               BoxShadow(
-                color: AppColors.primary.withValues(alpha: 0.35),
+                color: const Color(0xFF14677D).withValues(alpha: 0.28),
                 blurRadius: 12,
-                offset: const Offset(0, 8),
+                offset: const Offset(0, 6),
               ),
             ],
           ),

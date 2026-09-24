@@ -1,15 +1,21 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
+import '../../core/theme/app_fonts.dart';
 
 import '../../constants/app_routes.dart';
+import '../../core/location/delivery_location.dart';
+import '../../core/location/delivery_location_provider.dart';
+import '../../core/order/edit_order_session.dart';
 import '../../core/pricing/delivery_pricing.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/theme_mode_provider.dart';
 import '../../shared/figma_chrome.dart';
 import '../../shared/widgets.dart';
+import '../../data/models/models.dart';
+import '../location/map_location_picker_screen.dart';
 import '../providers.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -56,7 +62,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       Text(
                         'Sign in to manage your account',
                         textAlign: TextAlign.center,
-                        style: GoogleFonts.manrope(
+                        style: AppFonts.style(
                           fontWeight: FontWeight.w700,
                           fontSize: 18,
                           color: p.textPrimary,
@@ -66,7 +72,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       Text(
                         'Orders, addresses, wishlist and more await.',
                         textAlign: TextAlign.center,
-                        style: GoogleFonts.manrope(
+                        style: AppFonts.style(
                           color: p.textSecondary,
                           fontSize: 14,
                         ),
@@ -81,7 +87,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         onPressed: () => context.push(AppRoutes.register),
                         child: Text(
                           'Create Account',
-                          style: GoogleFonts.manrope(
+                          style: AppFonts.style(
                             fontWeight: FontWeight.w700,
                             color: p.teal,
                           ),
@@ -171,7 +177,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             icon: Icons.local_shipping_outlined,
                             label: 'Track My Order',
                             showDivider: false,
-                            onTap: () => context.push(AppRoutes.track('GT-88421')),
+                            onTap: () => context.push(AppRoutes.trackLookup),
                           ),
                         ],
                       ),
@@ -224,6 +230,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             onTap: () => context.push(AppRoutes.info),
                           ),
                           FigmaSettingsTile(
+                            icon: Icons.support_agent_outlined,
+                            label: 'Customer Support',
+                            onTap: () => context.push(AppRoutes.support),
+                          ),
+                          FigmaSettingsTile(
+                            icon: Icons.mail_outline,
+                            label: 'Contact Us',
+                            onTap: () => context.push(AppRoutes.contact),
+                          ),
+                          FigmaSettingsTile(
+                            icon: Icons.quiz_outlined,
+                            label: 'FAQ',
+                            onTap: () => context.push(AppRoutes.faq),
+                          ),
+                          FigmaSettingsTile(
+                            icon: Icons.groups_outlined,
+                            label: 'Our Team',
+                            onTap: () => context.push(AppRoutes.team),
+                          ),
+                          FigmaSettingsTile(
+                            icon: Icons.map_outlined,
+                            label: 'Sitemap',
+                            onTap: () => context.push(AppRoutes.siteMap),
+                          ),
+                          FigmaSettingsTile(
                             icon: Icons.star_outline,
                             label: 'Rate Gher Tak',
                             showDivider: false,
@@ -274,7 +305,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                                   const SizedBox(width: 12),
                                   Text(
                                     'Sign Out',
-                                    style: GoogleFonts.manrope(
+                                    style: AppFonts.style(
                                       fontWeight: FontWeight.w800,
                                       fontSize: 14,
                                       color: AppColors.error,
@@ -350,34 +381,71 @@ class _ProfileHeader extends ConsumerWidget {
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      Container(
-                        width: 70,
-                        height: 70,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.5),
-                            width: 3,
+                      ClipOval(
+                        child: SizedBox(
+                          width: 70,
+                          height: 70,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                width: 3,
+                              ),
+                              color: Colors.white.withValues(alpha: 0.2),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(3),
+                              child: ClipOval(
+                                child: avatar.isEmpty
+                                    ? ColoredBox(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.15),
+                                        child: Center(
+                                          child: Text(
+                                            initial,
+                                            style: AppFonts.style(
+                                              fontSize: 28,
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    : CachedNetworkImage(
+                                        imageUrl: avatar,
+                                        fit: BoxFit.cover,
+                                        width: 64,
+                                        height: 64,
+                                        alignment: Alignment.center,
+                                        memCacheWidth: 192,
+                                        memCacheHeight: 192,
+                                        fadeInDuration: Duration.zero,
+                                        errorWidget: (_, __, ___) => Center(
+                                          child: Text(
+                                            initial,
+                                            style: AppFonts.style(
+                                              fontSize: 28,
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                        placeholder: (_, __) => Center(
+                                          child: Text(
+                                            initial,
+                                            style: AppFonts.style(
+                                              fontSize: 28,
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                              ),
+                            ),
                           ),
-                          color: Colors.white.withValues(alpha: 0.2),
-                          image: avatar.isNotEmpty
-                              ? DecorationImage(
-                                  image: NetworkImage(avatar),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
                         ),
-                        alignment: Alignment.center,
-                        child: avatar.isEmpty
-                            ? Text(
-                                initial,
-                                style: GoogleFonts.manrope(
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : null,
                       ),
                       Positioned(
                         right: -2,
@@ -410,7 +478,7 @@ class _ProfileHeader extends ConsumerWidget {
                       children: [
                         Text(
                           name,
-                          style: GoogleFonts.manrope(
+                          style: AppFonts.style(
                             fontWeight: FontWeight.w800,
                             fontSize: 20,
                             color: Colors.white,
@@ -419,14 +487,14 @@ class _ProfileHeader extends ConsumerWidget {
                         const SizedBox(height: 4),
                         Text(
                           phone,
-                          style: GoogleFonts.manrope(
+                          style: AppFonts.style(
                             fontSize: 13,
                             color: Colors.white.withValues(alpha: 0.75),
                           ),
                         ),
                         Text(
                           email,
-                          style: GoogleFonts.manrope(
+                          style: AppFonts.style(
                             fontSize: 12,
                             color: Colors.white.withValues(alpha: 0.65),
                           ),
@@ -466,7 +534,7 @@ class _ProfileHeader extends ConsumerWidget {
         children: [
           Text(
             value,
-            style: GoogleFonts.manrope(
+            style: AppFonts.style(
               fontWeight: FontWeight.w800,
               fontSize: 20,
               color: Colors.white,
@@ -475,7 +543,7 @@ class _ProfileHeader extends ConsumerWidget {
           const SizedBox(height: 2),
           Text(
             label,
-            style: GoogleFonts.manrope(
+            style: AppFonts.style(
               fontSize: 11,
               color: Colors.white.withValues(alpha: 0.75),
             ),
@@ -500,80 +568,223 @@ class MenuScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authStateProvider).valueOrNull;
-    final p = AppPalette.of(context);
+    final loggedIn = user != null;
+    final initials = () {
+      final n = (user?.name ?? '').trim();
+      if (n.isEmpty) return 'GT';
+      final parts = n.split(RegExp(r'\s+'));
+      if (parts.length == 1) {
+        return parts.first.substring(0, 1).toUpperCase();
+      }
+      return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
+          .toUpperCase();
+    }();
+
+    final items = <({
+      String name,
+      IconData icon,
+      String route,
+      bool auth,
+      bool go,
+    })>[
+      (
+        name: 'My Orders',
+        icon: Icons.shopping_bag_outlined,
+        route: AppRoutes.orders,
+        auth: true,
+        go: true,
+      ),
+      (
+        name: 'Wishlist',
+        icon: Icons.favorite_border,
+        route: AppRoutes.wishlist,
+        auth: true,
+        go: false,
+      ),
+      (
+        name: 'Notifications',
+        icon: Icons.notifications_none,
+        route: AppRoutes.notifications,
+        auth: true,
+        go: false,
+      ),
+      (
+        name: 'Track My Order',
+        icon: Icons.location_on_outlined,
+        route: AppRoutes.trackLookup,
+        auth: false,
+        go: false,
+      ),
+      (
+        name: 'Wallet',
+        icon: Icons.account_balance_wallet_outlined,
+        route: AppRoutes.wallet,
+        auth: true,
+        go: false,
+      ),
+      (
+        name: 'Offers',
+        icon: Icons.local_offer_outlined,
+        route: AppRoutes.productsQuery(endpoint: 'sales'),
+        auth: false,
+        go: false,
+      ),
+      (
+        name: 'Trending',
+        icon: Icons.trending_up,
+        route: AppRoutes.productsQuery(endpoint: 'trending'),
+        auth: false,
+        go: false,
+      ),
+      (
+        name: 'New Arrivals',
+        icon: Icons.auto_awesome_outlined,
+        route: AppRoutes.productsQuery(endpoint: 'new-arrivals'),
+        auth: false,
+        go: false,
+      ),
+      (
+        name: 'About Us',
+        icon: Icons.info_outline,
+        route: AppRoutes.about,
+        auth: false,
+        go: false,
+      ),
+      (
+        name: 'Contact Us',
+        icon: Icons.phone_outlined,
+        route: AppRoutes.contact,
+        auth: false,
+        go: false,
+      ),
+      (
+        name: 'FAQ',
+        icon: Icons.help_outline,
+        route: AppRoutes.faq,
+        auth: false,
+        go: false,
+      ),
+      (
+        name: 'Terms & Privacy',
+        icon: Icons.description_outlined,
+        route: AppRoutes.info,
+        auth: false,
+        go: false,
+      ),
+    ];
+
     return Scaffold(
-      backgroundColor: p.background,
+      backgroundColor: AppPalette.of(context).background,
       appBar: AppBar(
+        backgroundColor: AppPalette.of(context).surface,
+        elevation: 0,
         title: Text(
           'Menu',
-          style: GoogleFonts.manrope(fontWeight: FontWeight.w800),
+          style: AppFonts.style(
+            fontWeight: FontWeight.w800,
+            fontSize: 20,
+            color: AppPalette.of(context).textPrimary,
+          ),
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 24),
         children: [
-          Container(
-            decoration: BoxDecoration(
-              color: p.card,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Column(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+            child: Row(
               children: [
-                ListTile(
-                  leading: const Icon(Icons.person_outline, color: AppColors.primary),
-                  title: Text(
-                    user?.name ?? 'Sign in / Register',
-                    style: GoogleFonts.manrope(fontWeight: FontWeight.w600),
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: const Color(0xFFDBEAFE),
+                  child: Text(
+                    initials,
+                    style: AppFonts.style(
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF3B6EA8),
+                      fontSize: 14,
+                    ),
                   ),
-                  trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
-                  onTap: () => context.push(
-                    user == null ? AppRoutes.login : AppRoutes.profile,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        loggedIn ? (user.name ?? 'Account') : 'Welcome',
+                        style: AppFonts.style(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () => context.push(
+                          loggedIn ? AppRoutes.profile : AppRoutes.login,
+                        ),
+                        child: Text(
+                          loggedIn ? 'View profile' : 'Sign in',
+                          style: AppFonts.style(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: AppColors.tealMid,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                const Divider(height: 1, color: AppColors.borderLight),
-                ListTile(
-                  leading: const Icon(Icons.home_outlined, color: AppColors.primary),
-                  title: Text('Home', style: GoogleFonts.manrope(fontWeight: FontWeight.w600)),
-                  onTap: () => context.go(AppRoutes.home),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.grid_view_outlined, color: AppColors.primary),
-                  title: Text('Shop', style: GoogleFonts.manrope(fontWeight: FontWeight.w600)),
-                  onTap: () => context.go(AppRoutes.categories),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.shopping_bag_outlined, color: AppColors.primary),
-                  title: Text('My orders', style: GoogleFonts.manrope(fontWeight: FontWeight.w600)),
-                  onTap: () => context.go(AppRoutes.orders),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.local_offer_outlined, color: AppColors.primary),
-                  title: Text('Offers', style: GoogleFonts.manrope(fontWeight: FontWeight.w600)),
-                  onTap: () => context.push(AppRoutes.productsQuery(endpoint: 'sales')),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.info_outline, color: AppColors.primary),
-                  title: Text('About Us', style: GoogleFonts.manrope(fontWeight: FontWeight.w600)),
-                  onTap: () => context.push(AppRoutes.about),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.mail_outline, color: AppColors.primary),
-                  title: Text('Contact Us', style: GoogleFonts.manrope(fontWeight: FontWeight.w600)),
-                  onTap: () => context.push(AppRoutes.contact),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.help_outline, color: AppColors.primary),
-                  title: Text('FAQ', style: GoogleFonts.manrope(fontWeight: FontWeight.w600)),
-                  onTap: () => context.push(AppRoutes.faq),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.description_outlined, color: AppColors.primary),
-                  title: Text('Terms & Privacy', style: GoogleFonts.manrope(fontWeight: FontWeight.w600)),
-                  onTap: () => context.push(AppRoutes.info),
                 ),
               ],
             ),
           ),
+          Divider(height: 1, color: AppColors.borderLight),
+          const SizedBox(height: 4),
+          for (final item in items)
+            ListTile(
+              leading: Icon(item.icon, color: AppColors.textSecondary),
+              title: Text(
+                item.name,
+                style: AppFonts.style(
+                  fontWeight: FontWeight.w500,
+                  fontSize: 15,
+                ),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              onTap: () {
+                if (item.auth && !loggedIn) {
+                  context.push(AppRoutes.login);
+                  return;
+                }
+                if (item.go) {
+                  context.go(item.route);
+                } else {
+                  context.push(item.route);
+                }
+              },
+            ),
+          if (loggedIn) ...[
+            Divider(height: 1, color: AppColors.borderLight),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Color(0xFFE25C2A)),
+              title: Text(
+                'Logout',
+                style: AppFonts.style(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 15,
+                  color: const Color(0xFFE25C2A),
+                ),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              onTap: () async {
+                await ref.read(authStateProvider.notifier).logout();
+                if (context.mounted) context.go(AppRoutes.home);
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -604,7 +815,7 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
     final products = ref.watch(offersProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppPalette.of(context).background,
       body: SafeArea(
         child: Column(
           children: [
@@ -625,12 +836,12 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                       },
                       decoration: InputDecoration(
                         hintText: 'Search All...',
-                        prefixIcon: const Icon(
+                        prefixIcon: Icon(
                           Icons.search,
                           color: AppColors.textMuted,
                         ),
                         filled: true,
-                        fillColor: const Color(0xFFF0F2F5),
+                        fillColor: AppColors.inputFill,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(28),
                           borderSide: BorderSide.none,
@@ -672,15 +883,19 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                                 color: active ? Colors.white : AppColors.textSecondary,
                               ),
                         label: Text(label),
-                        labelStyle: GoogleFonts.manrope(
+                        labelStyle: AppFonts.style(
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
-                          color: active ? Colors.white : AppColors.textPrimary,
+                          color: active
+                              ? Colors.white
+                              : AppPalette.of(context).textPrimary,
                         ),
                         selectedColor: AppColors.primary,
-                        backgroundColor: Colors.white,
+                        backgroundColor: AppPalette.of(context).surface,
                         side: BorderSide(
-                          color: active ? AppColors.primary : AppColors.border,
+                          color: active
+                              ? AppColors.primary
+                              : AppPalette.of(context).border,
                         ),
                         onSelected: (_) {
                           setState(() => _chipIndex = i);
@@ -706,7 +921,7 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                     return Center(
                       child: Text(
                         'No products yet',
-                        style: GoogleFonts.manrope(color: AppColors.textMuted),
+                        style: AppFonts.style(color: AppColors.textMuted),
                       ),
                     );
                   }
@@ -725,9 +940,6 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                       onTap: () => context.push(
                         AppRoutes.product('${list[i].id}'),
                       ),
-                      onAdd: () => ref
-                          .read(cartProvider.notifier)
-                          .add(list[i]),
                     ),
                   );
                 },
@@ -753,7 +965,7 @@ class PlaceholderScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppPalette.of(context).background,
       body: Column(
         children: [
           FigmaScreenHeader(title: title),
@@ -764,7 +976,7 @@ class PlaceholderScreen extends StatelessWidget {
                 child: Text(
                   subtitle ?? 'Coming soon.',
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.manrope(color: AppColors.textSecondary),
+                  style: AppFonts.style(color: AppColors.textSecondary),
                 ),
               ),
             ),
@@ -783,50 +995,502 @@ class CheckoutScreen extends ConsumerStatefulWidget {
 }
 
 class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
-  int _slot = 0;
+  /// 0 = Today … 3 = Today+3. Default tomorrow like website.
+  int _dateIndex = 1;
+  DateTime? _customDate;
+  int? _timeIndex = 0;
   int? _selectedAddressId;
   final Set<int> _noteChips = {};
   final _notes = TextEditingController();
+  final _guestName = TextEditingController();
+  final _guestPhone = TextEditingController();
+  final _guestEmail = TextEditingController();
 
-  static const _slots = [
-    ('Today', '60 min delivery ⚡'),
-    ('Tomorrow', 'Morning slot'),
-    ('Tomorrow', 'Evening slot'),
-  ];
+  /// Website `getQuickDeliveryDates` — Today + next 3 days.
+  List<DateTime> get _quickDates {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return List.generate(4, (i) => today.add(Duration(days: i)));
+  }
+
+  DateTime get _selectedDate {
+    if (_customDate != null) return _customDate!;
+    final dates = _quickDates;
+    return dates[_dateIndex.clamp(0, dates.length - 1)];
+  }
+
+  bool get _isTodaySelected {
+    final today = _quickDates.first;
+    final selected = _selectedDate;
+    return selected.year == today.year &&
+        selected.month == today.month &&
+        selected.day == today.day;
+  }
+
+  bool get _isCustomDateSelected {
+    final custom = _customDate;
+    if (custom == null) return false;
+    return !_quickDates.any(
+      (d) =>
+          d.year == custom.year &&
+          d.month == custom.month &&
+          d.day == custom.day,
+    );
+  }
 
   static const _chipLabels = [
     (Icons.notifications_off_outlined, 'Do not ring the bell'),
     (Icons.door_front_door_outlined, 'Leave it at the door'),
-    (Icons.phone_outlined, 'Call before delivery'),
+    (Icons.phone_outlined, 'Call on arrival'),
     (Icons.inventory_2_outlined, 'Contains fragile items'),
   ];
+
+  void _selectQuickDate(int index) {
+    setState(() {
+      _dateIndex = index;
+      _customDate = null;
+      if (index == 0) {
+        _timeIndex = null; // same-day slots fully booked
+      } else {
+        _timeIndex ??= 0;
+      }
+    });
+  }
+
+  Future<void> _pickCustomDate() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate.isBefore(today) ? today : _selectedDate,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 60)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+                  primary: AppColors.checkoutConfirm,
+                ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+    final day = DateTime(picked.year, picked.month, picked.day);
+    final quickIndex = _quickDates.indexWhere(
+      (d) => d.year == day.year && d.month == day.month && d.day == day.day,
+    );
+    setState(() {
+      if (quickIndex >= 0) {
+        _dateIndex = quickIndex;
+        _customDate = null;
+        if (quickIndex == 0) {
+          _timeIndex = null;
+        } else {
+          _timeIndex ??= 0;
+        }
+      } else {
+        _customDate = day;
+        _timeIndex ??= 0;
+      }
+    });
+  }
+
+  /// Website `PriorityPlanDialog` — toast + close only (no slot unlock / API).
+  Future<void> _showPriorityPlanSheet() async {
+    var yearly = false;
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModal) {
+            const monthly = 499;
+            const yearlyAmt = 3999;
+            final save = monthly * 12 - yearlyAmt;
+            final priceLabel = yearly
+                ? 'PKR ${_formatPkr(yearlyAmt)}/year'
+                : 'PKR ${_formatPkr(monthly)}/month';
+            return Dialog(
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 420),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF14181F).withValues(alpha: 0.18),
+                      blurRadius: 48,
+                      offset: const Offset(0, 16),
+                    ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+                      decoration: const BoxDecoration(
+                        gradient: AppColors.buttonGradient,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(
+                              Icons.star_rounded,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'GherTak Priority',
+                              style: AppFonts.style(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 17,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          Material(
+                            color: Colors.white.withValues(alpha: 0.15),
+                            shape: const CircleBorder(),
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: () => Navigator.pop(ctx),
+                              child: const SizedBox(
+                                width: 32,
+                                height: 32,
+                                child: Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(28, 28, 28, 28),
+                      child: Column(
+                        children: [
+                          Text(
+                            'Choose a Plan',
+                            textAlign: TextAlign.center,
+                            style: AppFonts.style(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 22,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Auto renews · Cancel anytime',
+                            textAlign: TextAlign.center,
+                            style: AppFonts.style(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 280),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEEF3F6),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: _planCycleChip(
+                                      label: 'Monthly',
+                                      selected: !yearly,
+                                      onTap: () =>
+                                          setModal(() => yearly = false),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: _planCycleChip(
+                                      label: 'Yearly',
+                                      selected: yearly,
+                                      onTap: () =>
+                                          setModal(() => yearly = true),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 24,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF4F6F8),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Column(
+                              children: [
+                                Stack(
+                                  clipBehavior: Clip.none,
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Padding(
+                                      padding: EdgeInsets.only(
+                                        top: yearly ? 10 : 0,
+                                        right: yearly ? 72 : 0,
+                                        left: yearly ? 72 : 0,
+                                      ),
+                                      child: Text(
+                                        priceLabel,
+                                        textAlign: TextAlign.center,
+                                        style: AppFonts.style(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 15,
+                                        ),
+                                      ),
+                                    ),
+                                    if (yearly)
+                                      Positioned(
+                                        top: 0,
+                                        right: 0,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFE7F6EE),
+                                            borderRadius:
+                                                BorderRadius.circular(999),
+                                          ),
+                                          child: Text(
+                                            'Save Rs. ${_formatPkr(save)}',
+                                            style: AppFonts.style(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w700,
+                                              color: const Color(0xFF15824B),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 48,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: AppColors.buttonGradient,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(12),
+                                        onTap: () {
+                                          Navigator.pop(ctx);
+                                          showAppToast(
+                                            context,
+                                            yearly
+                                                ? 'Solo yearly plan selected'
+                                                : 'Solo monthly plan selected',
+                                            isError: false,
+                                          );
+                                        },
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              'Subscribe Now',
+                                              style: AppFonts.style(
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 15,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            const Icon(
+                                              Icons.arrow_forward,
+                                              size: 18,
+                                              color: Colors.white,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  static String _formatPkr(int amount) {
+    final s = amount.toString();
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      final fromEnd = s.length - i;
+      buf.write(s[i]);
+      if (fromEnd > 1 && fromEnd % 3 == 1) buf.write(',');
+    }
+    return buf.toString();
+  }
+
+  Widget _planCycleChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: selected ? AppColors.checkoutConfirm : Colors.transparent,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: SizedBox(
+          height: 40,
+          child: Center(
+            child: Text(
+              label,
+              style: AppFonts.style(
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+                color: selected ? Colors.white : AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   void dispose() {
     _notes.dispose();
+    _guestName.dispose();
+    _guestPhone.dispose();
+    _guestEmail.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final session = ref.read(editOrderSessionProvider);
+      if (session?.orderNotes != null && session!.orderNotes!.isNotEmpty) {
+        _notes.text = session.orderNotes!;
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final cart = ref.watch(cartProvider).valueOrNull ?? [];
+    final editSession = ref.watch(editOrderSessionProvider);
     final itemsTotal = cart.fold<double>(
       0,
       (s, e) => s + e.product.displayPrice * e.quantity,
     );
+    final settings = ref.watch(settingsProvider).valueOrNull;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppPalette.of(context).background,
       body: Column(
         children: [
           FigmaScreenHeader(
-            title: 'Checkout',
+            title: editSession != null ? 'Update order' : 'Checkout',
             onBack: () => context.pop(),
           ),
+          if (editSession != null)
+            Material(
+              color: const Color(0xFFE1F0F3),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.edit_outlined, size: 18, color: Color(0xFF11788C)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Updating ${editSession.trackingNumber}',
+                        style: AppFonts.style(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          color: const Color(0xFF11788C),
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        await ref.read(editOrderSessionProvider.notifier).clear();
+                        await ref.read(cartProvider.notifier).clear();
+                        if (!context.mounted) return;
+                        showAppToast(
+                          context,
+                          'Edit cancelled. You are back to normal shopping.',
+                          isError: false,
+                        );
+                        context.go(AppRoutes.home);
+                      },
+                      child: Text(
+                        'Cancel',
+                        style: AppFonts.style(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.error,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           const CheckoutStepper(activeStep: 2),
+          FreeDeliveryBar(
+            subtotal: itemsTotal,
+            threshold: settings?.freeShippingAmount ?? 0,
+            enabled: settings?.freeShipping == true,
+          ),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+              physics: const ClampingScrollPhysics(),
               children: [
                 _card(
                   child: Column(
@@ -838,15 +1502,15 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Delivery Address',
-                              style: GoogleFonts.manrope(
+                              'Drop-off address',
+                              style: AppFonts.style(
                                 fontWeight: FontWeight.w800,
                                 fontSize: 15,
                               ),
                             ),
                           ),
                           TextButton(
-                            onPressed: () => context.push(AppRoutes.addresses),
+                            onPressed: () => _changeDeliveryPlace(),
                             style: TextButton.styleFrom(
                               foregroundColor: AppColors.primary,
                               padding: EdgeInsets.zero,
@@ -855,7 +1519,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                             ),
                             child: Text(
                               'Change',
-                              style: GoogleFonts.manrope(
+                              style: AppFonts.style(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 13,
                               ),
@@ -865,26 +1529,73 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       ),
                       const SizedBox(height: 14),
                       _buildAddressPicker(ref),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: () => context.push(AppRoutes.addresses),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(
-                            color: Color(0xFFC8E6F5),
-                            style: BorderStyle.solid,
-                          ),
-                          backgroundColor: const Color(0xFFF0F9FF),
-                          minimumSize: const Size.fromHeight(44),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                      if (ref.watch(authStateProvider).valueOrNull == null) ...[
+                        const SizedBox(height: 14),
+                        Text(
+                          'Contact for delivery',
+                          style: AppFonts.style(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: AppColors.textSecondary,
                           ),
                         ),
-                        child: Text(
-                          '+ Add New Address',
-                          style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _guestName,
+                          decoration: const InputDecoration(
+                            hintText: 'Full name',
+                            isDense: true,
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _guestPhone,
+                          keyboardType: TextInputType.phone,
+                          decoration: const InputDecoration(
+                            hintText: '03XXXXXXXXX',
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _guestEmail,
+                          keyboardType: TextInputType.emailAddress,
+                          decoration: const InputDecoration(
+                            hintText: 'Email (optional)',
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Delivery place is used for this order only — not saved to an account.',
+                          style: AppFonts.style(
+                            fontSize: 11.5,
+                            color: AppColors.textMuted,
+                            height: 1.35,
+                          ),
+                        ),
+                      ] else ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton(
+                          onPressed: () => context.push(AppRoutes.addresses),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(
+                              color: Color(0xFFC8E6F5),
+                              style: BorderStyle.solid,
+                            ),
+                            backgroundColor: const Color(0xFFF0F9FF),
+                            minimumSize: const Size.fromHeight(44),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            '+ Add New Address',
+                            style: AppFonts.style(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -898,24 +1609,75 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           _iconBadge(Icons.calendar_today_outlined),
                           const SizedBox(width: 8),
                           Text(
-                            'Delivery Slot',
-                            style: GoogleFonts.manrope(
+                            'Schedule',
+                            style: AppFonts.style(
                               fontWeight: FontWeight.w800,
                               fontSize: 15,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Choose a delivery date',
+                        style: AppFonts.style(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
                       Row(
                         children: [
-                          Expanded(child: _slotChip(0)),
-                          const SizedBox(width: 8),
-                          Expanded(child: _slotChip(1)),
+                          for (var i = 0; i < _quickDates.length; i++) ...[
+                            if (i > 0) const SizedBox(width: 6),
+                            Expanded(child: _dateChip(i)),
+                          ],
+                          const SizedBox(width: 6),
+                          Expanded(child: _selectDateChip()),
                         ],
                       ),
+                      if (_isTodaySelected) ...[
+                        const SizedBox(height: 14),
+                        _priorityBanner(),
+                      ],
+                      const SizedBox(height: 14),
+                      Text(
+                        'Delivery time slot',
+                        style: AppFonts.style(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
                       const SizedBox(height: 8),
-                      _slotChip(2, fullWidth: true),
+                      Builder(
+                        builder: (context) {
+                          final times = ref
+                                  .watch(settingsProvider)
+                                  .valueOrNull
+                                  ?.deliveryTimes ??
+                              DeliveryTimeSlot.defaults;
+                          if (_isTodaySelected) {
+                            return Column(
+                              children: [
+                                for (var i = 0; i < times.length; i++) ...[
+                                  if (i > 0) const SizedBox(height: 8),
+                                  _fullyBookedSlot(times[i]),
+                                ],
+                              ],
+                            );
+                          }
+                          return Column(
+                            children: [
+                              for (var i = 0; i < times.length; i++) ...[
+                                if (i > 0) const SizedBox(height: 8),
+                                _timeSlotRow(i, times[i]),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -930,7 +1692,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           const SizedBox(width: 8),
                           Text(
                             'Order notes',
-                            style: GoogleFonts.manrope(
+                            style: AppFonts.style(
                               fontWeight: FontWeight.w800,
                               fontSize: 15,
                             ),
@@ -938,7 +1700,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           const SizedBox(width: 6),
                           Text(
                             '(optional)',
-                            style: GoogleFonts.manrope(
+                            style: AppFonts.style(
                               fontSize: 11,
                               color: AppColors.textMuted,
                             ),
@@ -947,8 +1709,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Add delivery instructions, special requests or a gift message.',
-                        style: GoogleFonts.manrope(
+                        'Add drop-off notes, special requests or a gift message.',
+                        style: AppFonts.style(
                           fontSize: 11.5,
                           color: AppColors.textMuted,
                         ),
@@ -968,20 +1730,20 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                         maxLines: 2,
                         decoration: InputDecoration(
                           hintText:
-                              'e.g. Leave at the door, call before delivery, gift wrap please…',
-                          hintStyle: GoogleFonts.manrope(
+                              'e.g. Leave at the door, call on arrival, gift wrap please…',
+                          hintStyle: AppFonts.style(
                             fontSize: 12.5,
                             color: AppColors.textMuted,
                           ),
                           filled: true,
-                          fillColor: Colors.white,
+                          fillColor: AppColors.surface,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(9),
-                            borderSide: const BorderSide(color: AppColors.border),
+                            borderSide: BorderSide(color: AppColors.border),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(9),
-                            borderSide: const BorderSide(color: AppColors.border),
+                            borderSide: BorderSide(color: AppColors.border),
                           ),
                         ),
                       ),
@@ -995,15 +1757,15 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       _totalRow('Items', formatRs(itemsTotal)),
                       const SizedBox(height: 10),
                       ..._checkoutDeliveryRows(itemsTotal),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         child: Divider(height: 1, color: AppColors.borderLight),
                       ),
                       Row(
                         children: [
                           Text(
                             'Total Payable',
-                            style: GoogleFonts.manrope(
+                            style: AppFonts.style(
                               fontWeight: FontWeight.w800,
                               fontSize: 16,
                             ),
@@ -1013,7 +1775,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                             formatRs(
                               itemsTotal + _checkoutQuote(itemsTotal).fee,
                             ),
-                            style: GoogleFonts.manrope(
+                            style: AppFonts.style(
                               fontWeight: FontWeight.w800,
                               fontSize: 18,
                               color: AppColors.primary,
@@ -1027,7 +1789,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                 ),
                 const SizedBox(height: 20),
                 BrandGradientButton(
-                  label: 'Proceed to Payments',
+                  label: ref.watch(editOrderSessionProvider) != null
+                      ? 'Continue to update'
+                      : 'Proceed to Payments',
                   onPressed: () => _proceedToPayment(ref),
                 ),
               ],
@@ -1039,7 +1803,59 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   }
 
 
+  Future<void> _changeDeliveryPlace() async {
+    final loggedIn = ref.read(authStateProvider).valueOrNull != null;
+    if (loggedIn) {
+      context.push(AppRoutes.addresses);
+      return;
+    }
+    final current = ref.read(deliveryLocationProvider).valueOrNull;
+    final result = await Navigator.of(context).push<MapPickResult>(
+      MaterialPageRoute(
+        builder: (_) => MapLocationPickerScreen(
+          initialLat: current?.lat,
+          initialLng: current?.lng,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    final loc = DeliveryLocation(
+      label: result.label ??
+          [
+            if ((result.street ?? '').isNotEmpty) result.street,
+            if ((result.city ?? '').isNotEmpty) result.city,
+          ].whereType<String>().join(', '),
+      lat: result.lat,
+      lng: result.lng,
+      hasGps: true,
+      street: result.street,
+      city: result.city,
+    );
+    // Session / local only — do not POST to address API for guests.
+    ref.read(deliveryLocationOverrideProvider.notifier).state = loc;
+    await persistDeliveryLocation(loc);
+    ref.read(needsDeliveryGateProvider.notifier).state = false;
+    ref.invalidate(deliveryLocationProvider);
+    if (mounted) {
+      showAppToast(context, 'Delivery place updated', isError: false);
+      setState(() {});
+    }
+  }
+
   Widget _buildAddressPicker(WidgetRef ref) {
+    final loggedIn = ref.watch(authStateProvider).valueOrNull != null;
+    if (!loggedIn) {
+      final locAsync = ref.watch(deliveryLocationProvider);
+      return locAsync.when(
+        loading: () => const Padding(
+          padding: EdgeInsets.all(16),
+          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        ),
+        error: (_, __) => _guestDeliveryCard(DeliveryLocation.fallback),
+        data: _guestDeliveryCard,
+      );
+    }
+
     final addressesAsync = ref.watch(addressesProvider);
     return addressesAsync.when(
       loading: () => const Padding(
@@ -1047,8 +1863,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       ),
       error: (e, _) => Text(
-        e.toString(),
-        style: GoogleFonts.manrope(color: AppColors.error, fontSize: 12),
+        friendlyUserMessage(e),
+        style: AppFonts.style(color: AppColors.error, fontSize: 12),
       ),
       data: (addresses) {
         if (addresses.isEmpty) {
@@ -1060,7 +1876,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             ),
             child: Text(
               'No saved addresses. Add one to continue.',
-              style: GoogleFonts.manrope(
+              style: AppFonts.style(
                 fontSize: 12,
                 color: AppColors.textSecondary,
               ),
@@ -1111,7 +1927,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           children: [
                             Text(
                               a.title,
-                              style: GoogleFonts.manrope(
+                              style: AppFonts.style(
                                 fontWeight: FontWeight.w800,
                                 fontSize: 13,
                               ),
@@ -1121,7 +1937,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                               a.lineSummary.isEmpty
                                   ? 'Incomplete address'
                                   : a.lineSummary,
-                              style: GoogleFonts.manrope(
+                              style: AppFonts.style(
                                 fontSize: 12,
                                 height: 1.45,
                                 color: AppColors.textSecondary,
@@ -1141,6 +1957,51 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     );
   }
 
+  Widget _guestDeliveryCard(DeliveryLocation loc) {
+    final line = [
+      if ((loc.street ?? '').trim().isNotEmpty) loc.street!.trim(),
+      if ((loc.city ?? '').trim().isNotEmpty) loc.city!.trim(),
+    ].join(', ');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.inputFill,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary, width: 1.5),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.place_outlined, size: 18, color: AppColors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Delivering to',
+                  style: AppFonts.style(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  line.isNotEmpty ? line : loc.label,
+                  style: AppFonts.style(
+                    fontSize: 12,
+                    height: 1.45,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   DeliveryQuote _checkoutQuote(double subtotal) {
     final settings = ref.watch(settingsProvider).valueOrNull;
     final shipping = ref.watch(shippingClassProvider).valueOrNull;
@@ -1155,23 +2016,23 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   List<Widget> _checkoutDeliveryRows(double subtotal) {
     final shippingAsync = ref.watch(shippingClassProvider);
     if (shippingAsync.isLoading) {
-      return [_totalRow('Delivery', '…')];
+      return [_totalRow('Fulfillment', '…')];
     }
     final q = _checkoutQuote(subtotal);
     if (q.baseFee <= 0 && shippingAsync.valueOrNull == null) {
-      return [_totalRow('Delivery', '—')];
+      return [_totalRow('Fulfillment', '—')];
     }
     if (q.isFree) {
       return [
         _totalRow(
-          'Delivery',
-          'FREE',
+          'Fulfillment',
+          'COMPLIMENTARY',
           valueColor: AppColors.successText,
         ),
       ];
     }
     return [
-      _totalRow('Delivery', formatRs(q.fee)),
+      _totalRow('Fulfillment', formatRs(q.fee)),
     ];
   }
 
@@ -1182,10 +2043,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       return [
         const SizedBox(height: 10),
         Text(
-          'You qualify for free delivery',
-          style: GoogleFonts.manrope(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
+          'Your order qualifies for complimentary fulfillment!',
+          style: AppFonts.style(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
             color: AppColors.successText,
           ),
         ),
@@ -1195,9 +2056,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     return [
       const SizedBox(height: 10),
       Text(
-        'Add ${formatRs(need)} more for free delivery (orders over ${formatRs(q.threshold)})',
-        style: GoogleFonts.manrope(
-          fontSize: 12,
+        'Add ${formatRs(need)} more for complimentary fulfillment',
+        style: AppFonts.style(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w600,
           color: AppColors.textMuted,
           height: 1.35,
         ),
@@ -1206,63 +2068,135 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   }
 
   void _proceedToPayment(WidgetRef ref) {
-    final addresses = ref.read(addressesProvider).valueOrNull ?? [];
-    if (addresses.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please add a delivery address first')),
-      );
-      context.push(AppRoutes.addresses);
-      return;
-    }
-    final defaults = addresses.where((a) => a.isDefault).toList();
-    final id = _selectedAddressId ??
-        (defaults.isNotEmpty ? defaults.first.id : addresses.first.id);
-    final address = addresses.firstWhere((a) => a.id == id);
-    if ((address.street ?? '').isEmpty || (address.city ?? '').isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selected address is incomplete')),
-      );
-      return;
-    }
-    if (address.lat == null || address.lng == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Set delivery location on the map for this address'),
-        ),
-      );
-      return;
-    }
     final user = ref.read(authStateProvider).valueOrNull;
-    final phone = (address.phone?.isNotEmpty == true)
-        ? address.phone!
-        : (user?.phoneNo ?? '');
-    if (phone.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Add a phone number to your profile or address'),
-        ),
+    final loggedIn = user != null;
+
+    late final Map<String, dynamic> shipping;
+    String? addressTitle;
+    int? addressId;
+    late final String phone;
+
+    if (!loggedIn) {
+      final name = _guestName.text.trim();
+      phone = _guestPhone.text.trim().replaceAll(RegExp(r'[^0-9+]'), '');
+      if (name.isEmpty) {
+        showAppToast(context, 'Please enter your name');
+        return;
+      }
+      if (phone.length < 10) {
+        showAppToast(context, 'Please enter a valid phone number');
+        return;
+      }
+      final loc = ref.read(deliveryLocationProvider).valueOrNull ??
+          DeliveryLocation.fallback;
+      if (loc.lat == null || loc.lng == null) {
+        showAppToast(context, 'Please set a delivery place on the map');
+        return;
+      }
+      shipping = {
+        'name': name,
+        'phone': phone,
+        if (_guestEmail.text.trim().isNotEmpty)
+          'email': _guestEmail.text.trim(),
+        'street': (loc.street ?? '').isNotEmpty ? loc.street : loc.label,
+        'city': loc.city ?? 'Islamabad',
+        'state': 'Islamabad Capital Territory',
+        'country': 'Pakistan',
+        'title': 'Delivery',
+        'location': {'lat': loc.lat, 'lng': loc.lng},
+      };
+      addressTitle = 'Delivery';
+    } else {
+      final addresses = ref.read(addressesProvider).valueOrNull ?? [];
+      if (addresses.isEmpty) {
+        showAppToast(context, 'Please add an address first');
+        context.push(AppRoutes.addresses);
+        return;
+      }
+      final defaults = addresses.where((a) => a.isDefault).toList();
+      final id = _selectedAddressId ??
+          (defaults.isNotEmpty ? defaults.first.id : addresses.first.id);
+      final address = addresses.firstWhere((a) => a.id == id);
+      if ((address.street ?? '').isEmpty || (address.city ?? '').isEmpty) {
+        showAppToast(context, 'Selected address is incomplete');
+        return;
+      }
+      if (address.lat == null || address.lng == null) {
+        showAppToast(context, 'Set a map pin for this address');
+        return;
+      }
+      phone = (address.phone?.isNotEmpty == true)
+          ? address.phone!
+          : (user.phoneNo ?? '');
+      if (phone.trim().isEmpty) {
+        showAppToast(
+          context,
+          'Add a phone number to your profile or address',
+        );
+        return;
+      }
+      shipping = address.toShippingPayload(
+        customerName: user.name ?? 'Customer',
+        customerPhone: phone,
       );
-      return;
+      addressTitle = address.title;
+      addressId = address.id;
     }
-    final chipNotes = _noteChips
-        .map((i) => _chipLabels[i].$2)
-        .join('; ');
+
+    final chipNotes = _noteChips.map((i) => _chipLabels[i].$2).join('; ');
     final notes = [
       if (chipNotes.isNotEmpty) chipNotes,
       if (_notes.text.trim().isNotEmpty) _notes.text.trim(),
     ].join(' · ');
-    final slot = _slots[_slot];
-    final deliveryTime = '${slot.$1} · ${slot.$2}';
+
+    if (_isTodaySelected) {
+      showAppToast(
+        context,
+        "Today's slots are fully booked. Pick another date, or join Gher Tak Premium.",
+      );
+      return;
+    }
+    final times = ref.read(settingsProvider).valueOrNull?.deliveryTimes ??
+        DeliveryTimeSlot.defaults;
+    if (_timeIndex == null ||
+        _timeIndex! < 0 ||
+        _timeIndex! >= times.length) {
+      showAppToast(context, 'Please select a delivery time slot');
+      return;
+    }
+    final date = _selectedDate;
+    final time = times[_timeIndex!];
+    final weekday = const [
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat',
+      'Sun',
+    ][date.weekday - 1];
+    final month = const [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ][date.month - 1];
+    final deliveryTime = '$weekday ${date.day} $month · ${time.label}';
 
     ref.read(checkoutDraftProvider.notifier).state = CheckoutDraft(
-      shippingAddress: address.toShippingPayload(
-        customerName: user?.name ?? 'Customer',
-        customerPhone: phone,
-      ),
+      shippingAddress: shipping,
       deliveryTime: deliveryTime,
       orderNotes: notes.isEmpty ? null : notes,
-      addressTitle: address.title,
-      addressId: address.id,
+      addressTitle: addressTitle,
+      addressId: addressId,
     );
     context.push(AppRoutes.payment);
   }
@@ -1290,38 +2224,81 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     );
   }
 
-  Widget _slotChip(int index, {bool fullWidth = false}) {
-    final selected = _slot == index;
-    final slot = _slots[index];
+  Widget _dateChip(int index) {
+    final date = _quickDates[index];
+    final isToday = index == 0;
+    final selected = !_isCustomDateSelected &&
+        date.year == _selectedDate.year &&
+        date.month == _selectedDate.month &&
+        date.day == _selectedDate.day;
+    final weekday = const [
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat',
+      'Sun',
+    ][date.weekday - 1];
+    final month = const [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ][date.month - 1];
     return GestureDetector(
-      onTap: () => setState(() => _slot = index),
+      onTap: () => _selectQuickDate(index),
       child: Container(
-        width: fullWidth ? double.infinity : null,
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
         decoration: BoxDecoration(
-          color: selected ? AppColors.primarySoftAlt : AppColors.inputFill,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? AppColors.primary : AppColors.border,
-            width: 2,
+            color: selected ? AppColors.checkoutConfirm : AppColors.border,
+            width: 1.5,
           ),
         ),
         child: Column(
           children: [
             Text(
-              slot.$1,
-              style: GoogleFonts.manrope(
+              isToday ? 'TODAY' : weekday.toUpperCase(),
+              style: AppFonts.style(
                 fontWeight: FontWeight.w800,
-                fontSize: 12,
-                color: selected ? AppColors.primary : AppColors.textSecondary,
+                fontSize: 9.5,
+                letterSpacing: 0.4,
+                color: selected
+                    ? AppColors.checkoutConfirm
+                    : AppColors.textMuted,
               ),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 5),
             Text(
-              slot.$2,
-              style: GoogleFonts.manrope(
+              '${date.day}',
+              style: AppFonts.style(
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+                color: selected
+                    ? AppColors.checkoutConfirm
+                    : AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              month,
+              style: AppFonts.style(
+                fontWeight: FontWeight.w600,
                 fontSize: 11,
-                color: selected ? AppColors.textSecondary : AppColors.textMuted,
+                color: selected
+                    ? AppColors.checkoutConfirm
+                    : AppColors.textSecondary,
               ),
             ),
           ],
@@ -1329,6 +2306,326 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       ),
     );
   }
+
+  Widget _selectDateChip() {
+    final selected = _isCustomDateSelected;
+    final date = _customDate;
+    final weekday = date == null
+        ? null
+        : const [
+            'Mon',
+            'Tue',
+            'Wed',
+            'Thu',
+            'Fri',
+            'Sat',
+            'Sun',
+          ][date.weekday - 1];
+    final month = date == null
+        ? null
+        : const [
+            'Jan',
+            'Feb',
+            'Mar',
+            'Apr',
+            'May',
+            'Jun',
+            'Jul',
+            'Aug',
+            'Sep',
+            'Oct',
+            'Nov',
+            'Dec',
+          ][date.month - 1];
+    return GestureDetector(
+      onTap: _pickCustomDate,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white : AppColors.checkoutConfirm,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: AppColors.checkoutConfirm,
+            width: 1.5,
+          ),
+        ),
+        child: selected && date != null
+            ? Column(
+                children: [
+                  Text(
+                    weekday!.toUpperCase(),
+                    style: AppFonts.style(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 9.5,
+                      letterSpacing: 0.4,
+                      color: AppColors.checkoutConfirm,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '${date.day}',
+                    style: AppFonts.style(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
+                      color: AppColors.checkoutConfirm,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    month!,
+                    style: AppFonts.style(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                      color: AppColors.checkoutConfirm,
+                    ),
+                  ),
+                ],
+              )
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.calendar_month_outlined,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Select',
+                    style: AppFonts.style(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _priorityBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      decoration: BoxDecoration(
+        gradient: AppColors.buttonGradient,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.star_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Gher Tak Priority',
+                style: AppFonts.style(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Skip the queue on every order',
+            style: AppFonts.style(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            "Today's slots are fully booked. Still need it today!",
+            style: AppFonts.style(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 42,
+            child: FilledButton(
+              onPressed: _showPriorityPlanSheet,
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: AppColors.checkoutConfirm,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                'Join Gher Tak Premium',
+                style: AppFonts.style(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                  color: AppColors.checkoutConfirm,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fullyBookedSlot(DeliveryTimeSlot slot) {
+    return Stack(
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFB),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFD7DCE3), width: 2),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  slot.label.replaceFirst(' - ', ' · '),
+                  style: AppFonts.style(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFF9AA3AF),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          right: 28,
+          top: 0,
+          bottom: 0,
+          child: Center(
+            child: Transform.rotate(
+              angle: -0.32,
+              child: Container(
+                width: 108,
+                padding: const EdgeInsets.symmetric(vertical: 3.5),
+                color: const Color(0xFFE24B4B),
+                child: Text(
+                  'FULLY BOOKED',
+                  textAlign: TextAlign.center,
+                  style: AppFonts.style(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.4,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _timeSlotRow(int index, DeliveryTimeSlot slot) {
+    final selected = _timeIndex == index;
+    return GestureDetector(
+      onTap: () => setState(() => _timeIndex = index),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFE8F6F8) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? AppColors.checkoutConfirm : AppColors.border,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: selected ? AppColors.checkoutConfirm : Colors.transparent,
+                border: Border.all(
+                  color: selected
+                      ? AppColors.checkoutConfirm
+                      : const Color(0xFFD7DCE3),
+                  width: 2,
+                ),
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                slot.label.replaceFirst(' - ', ' · '),
+                style: AppFonts.style(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            if (selected)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD8F0F4),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'Selected',
+                  style: AppFonts.style(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.checkoutConfirm,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
 
   Widget _noteChip(int index) {
     final selected = _noteChips.contains(index);
@@ -1363,7 +2660,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             const SizedBox(width: 6),
             Text(
               chip.$2,
-              style: GoogleFonts.manrope(
+              style: AppFonts.style(
                 fontWeight: FontWeight.w600,
                 fontSize: 12.5,
                 color: AppColors.textPrimary,
@@ -1380,17 +2677,18 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       children: [
         Text(
           label,
-          style: GoogleFonts.manrope(
-            fontSize: 14,
+          style: AppFonts.style(
+            fontSize: AppFonts.body,
+            fontWeight: FontWeight.w600,
             color: AppColors.textSecondary,
           ),
         ),
         const Spacer(),
         Text(
           value,
-          style: GoogleFonts.manrope(
+          style: AppFonts.style(
             fontWeight: FontWeight.w700,
-            fontSize: 14,
+            fontSize: AppFonts.body,
             color: valueColor ?? AppColors.textPrimary,
           ),
         ),

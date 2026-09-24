@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Ghertak Mobile</string>
+	<string>Gher Tak</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -53,12 +53,39 @@
 	<string>Gher Tak needs camera access to search products by photo and scan barcodes.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Gher Tak needs microphone access for voice search.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Gher Tak uses speech recognition to turn your voice into a product search.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Gher Tak uses your location to show delivery area and set your address pin.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Gher Tak needs photo library access so you can set a profile picture.</string>
+	<string>Gher Tak needs photo library access for profile pictures and searching products from a gallery photo or barcode image.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Gher Tak needs permission to save photos you capture for product search.</string>
+	<!-- Google Sign-In URL scheme (reversed iOS/Web OAuth client id). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- Matches AppConfig.googleClientId reversed form. Replace with REVERSED_CLIENT_ID from GoogleService-Info.plist when you add an iOS OAuth client. -->
+				<string>com.googleusercontent.apps.375898179358-pnst0277v4jugtu5bn2t6t1pom6g8edt</string>
+			</array>
+		</dict>
+	</array>
+	<key>GIDClientID</key>
+	<string>375898179358-pnst0277v4jugtu5bn2t6t1pom6g8edt.apps.googleusercontent.com</string>
+	<!-- url_launcher / WhatsApp / https deep links -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>https</string>
+		<string>http</string>
+		<string>whatsapp</string>
+		<string>googlegmail</string>
+		<string>googlechromes</string>
+		<string>googlechrome</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

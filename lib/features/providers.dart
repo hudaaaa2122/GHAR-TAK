@@ -83,6 +83,20 @@ final categoriesProvider = FutureProvider.autoDispose<List<CategoryModel>>((ref)
   return ref.watch(catalogRepositoryProvider).listCategories(vertical: vertical);
 });
 
+/// Website `useGetBrowseTilesQuery` — home Shop-by-category tiles with images.
+final browseTilesProvider =
+    FutureProvider.autoDispose<List<BrowseCategoryTile>>((ref) {
+  final vertical = ref.watch(verticalProvider);
+  return ref.watch(catalogRepositoryProvider).listBrowseTiles(vertical: vertical);
+});
+
+/// Website-style search placeholder total (`Search N items`).
+final catalogProductCountProvider =
+    FutureProvider.autoDispose<int>((ref) {
+  final vertical = ref.watch(verticalProvider);
+  return ref.watch(catalogRepositoryProvider).countProducts(vertical: vertical);
+});
+
 final manufacturersProvider =
     FutureProvider.autoDispose<List<ManufacturerModel>>((ref) {
   final vertical = ref.watch(verticalProvider);
@@ -132,6 +146,50 @@ final limitedStockProvider =
       ).catchError((_) => <ProductModel>[]);
 });
 
+final trendingProvider =
+    FutureProvider.autoDispose<List<ProductModel>>((ref) {
+  final vertical = ref.watch(verticalProvider);
+  return ref.watch(catalogRepositoryProvider).listProducts(
+        vertical: vertical,
+        endpoint: ApiEndpoints.productTrending,
+        limit: 12,
+      ).catchError((_) => <ProductModel>[]);
+});
+
+final newArrivalsProvider =
+    FutureProvider.autoDispose<List<ProductModel>>((ref) {
+  final vertical = ref.watch(verticalProvider);
+  return ref.watch(catalogRepositoryProvider).listProducts(
+        vertical: vertical,
+        endpoint: ApiEndpoints.productNewArrivals,
+        limit: 12,
+      ).catchError((_) => <ProductModel>[]);
+});
+
+final bannersProvider =
+    FutureProvider.autoDispose<List<BannerModel>>((ref) {
+  final vertical = ref.watch(verticalProvider);
+  return ref
+      .watch(catalogRepositoryProvider)
+      .listBanners(vertical: vertical)
+      .catchError((_) => <BannerModel>[]);
+});
+
+final recentOrdersHomeProvider =
+    FutureProvider.autoDispose<List<OrderModel>>((ref) async {
+  final user = ref.watch(authStateProvider).valueOrNull;
+  if (user == null) return [];
+  try {
+    final all = await ref.watch(orderRepositoryProvider).listAllMine();
+    return all.take(3).toList();
+  } catch (_) {
+    return [];
+  }
+});
+
+/// Applied cart/checkout coupon (website CartPage parity).
+final appliedCouponProvider = StateProvider<CouponModel?>((_) => null);
+
 final cartProvider =
     StateNotifierProvider<CartController, AsyncValue<List<CartItemModel>>>((ref) {
   return CartController(ref.watch(cartRepositoryProvider));
@@ -152,14 +210,33 @@ class CartController extends StateNotifier<AsyncValue<List<CartItemModel>>> {
     state = const AsyncValue.data([]);
   }
 
-  Future<void> add(ProductModel product, {int qty = 1}) async {
+  Future<void> clear() async {
+    await _repo.clear();
+    clearLocal();
+  }
+
+  Future<void> add(
+    ProductModel product, {
+    int qty = 1,
+    int? variationOptionId,
+  }) async {
     final shopId = product.shopId ?? 0;
     await _repo.add(
       productId: product.id,
       shopId: shopId,
       quantity: qty,
+      variationOptionId: variationOptionId,
       product: product,
     );
+    await refresh();
+  }
+
+  /// Website EditOrderDialog: clear cart then bulk-create session items.
+  Future<void> bulkReplaceFromEdit(
+    List<Map<String, dynamic>> items,
+  ) async {
+    await _repo.clear();
+    await _repo.bulkCreate(items);
     await refresh();
   }
 
@@ -217,12 +294,17 @@ final orderDetailProvider =
 
 final addressesProvider =
     FutureProvider.autoDispose<List<AddressModel>>((ref) async {
-  ref.watch(authStateProvider);
+  final user = ref.watch(authStateProvider).valueOrNull;
+  // Guests have no saved addresses — avoid "Not authenticated" under checkout.
+  if (user == null) return <AddressModel>[];
   return ref.watch(accountRepositoryProvider).listAddresses();
 });
 
 final walletProvider = FutureProvider.autoDispose<WalletModel>((ref) async {
-  ref.watch(authStateProvider);
+  final user = ref.watch(authStateProvider).valueOrNull;
+  if (user == null) {
+    return const WalletModel(balance: 0);
+  }
   return ref.watch(accountRepositoryProvider).walletBalance();
 });
 

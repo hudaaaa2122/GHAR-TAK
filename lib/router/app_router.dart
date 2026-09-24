@@ -4,15 +4,18 @@ import 'package:go_router/go_router.dart';
 
 import '../constants/app_routes.dart';
 import '../constants/app_strings.dart';
+import '../core/theme/app_palette.dart';
 import '../core/theme/vertical_theme.dart';
 import '../features/account/account_screens.dart';
 import '../features/account/figma_screens.dart';
+import '../features/payment/payment_screen.dart';
 import '../features/account/order_detail_screens.dart';
 import '../features/auth/auth_screens.dart';
 import '../features/auth/splash_intro_screens.dart';
 import '../features/cart/cart_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/info/info_screens.dart';
+import '../features/info/extra_info_screens.dart';
 import '../features/location/map_location_picker_screen.dart';
 import '../features/product/product_detail_screen.dart';
 import '../features/product/product_list_screen.dart';
@@ -105,6 +108,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             barcode: q['barcode'],
             endpoint: q['endpoint'],
             categoryId: int.tryParse(q['categoryId'] ?? ''),
+            categoryIsRoot: q['categoryRoot'] == '1',
+            categoryIdKey: q['categoryIdKey'] == '1',
             manufacturerId: int.tryParse(q['manufacturerId'] ?? ''),
           );
         },
@@ -151,6 +156,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (_, state) => TrackOrderScreen(
           orderId: state.pathParameters['id'] ?? '',
         ),
+      ),
+      GoRoute(
+        path: AppRoutes.trackLookup,
+        builder: (_, __) => const TrackOrderScreen(),
       ),
       GoRoute(
         path: AppRoutes.wishlist,
@@ -235,6 +244,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.privacy,
         builder: (_, __) => const PrivacyScreen(),
       ),
+      GoRoute(
+        path: AppRoutes.support,
+        builder: (_, __) => const SupportScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.siteMap,
+        builder: (_, __) => const SiteMapScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.team,
+        builder: (_, __) => const TeamScreen(),
+      ),
     ],
   );
 });
@@ -254,8 +275,10 @@ class MainShell extends ConsumerWidget {
         0;
 
     return Scaffold(
+      backgroundColor: AppPalette.of(context).background,
       body: navigationShell,
       bottomNavigationBar: NavigationBar(
+        backgroundColor: AppPalette.of(context).surface,
         selectedIndex: navigationShell.currentIndex,
         onDestinationSelected: navigationShell.goBranch,
         indicatorColor: theme.primarySoft,

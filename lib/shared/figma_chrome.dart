@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../core/theme/app_colors.dart';
+import '../core/theme/app_fonts.dart';
+import '../core/theme/app_palette.dart';
 
 /// Circular back button matching Figma checkout/cart headers.
 class FigmaBackButton extends StatelessWidget {
@@ -11,25 +12,26 @@ class FigmaBackButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
     return Material(
-      color: Colors.white,
-      shape: const CircleBorder(
-        side: BorderSide(color: AppColors.border),
+      color: p.surface,
+      shape: CircleBorder(
+        side: BorderSide(color: p.border),
       ),
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onPressed ?? () => Navigator.maybePop(context),
-        child: const SizedBox(
+        child: SizedBox(
           width: 40,
           height: 40,
-          child: Icon(Icons.chevron_left, size: 24, color: AppColors.textPrimary),
+          child: Icon(Icons.chevron_left, size: 24, color: p.textPrimary),
         ),
       ),
     );
   }
 }
 
-/// Sticky white header used across cart / checkout / orders screens.
+/// Sticky header used across cart / checkout / orders screens.
 class FigmaScreenHeader extends StatelessWidget implements PreferredSizeWidget {
   const FigmaScreenHeader({
     super.key,
@@ -47,15 +49,16 @@ class FigmaScreenHeader extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
     return Material(
-      color: Colors.white,
+      color: p.surface,
       child: SafeArea(
         bottom: false,
         child: Container(
           height: 64,
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: AppColors.borderLight)),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: p.border)),
           ),
           child: Row(
             children: [
@@ -64,10 +67,10 @@ class FigmaScreenHeader extends StatelessWidget implements PreferredSizeWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: GoogleFonts.manrope(
+                  style: AppFonts.style(
                     fontWeight: FontWeight.w800,
                     fontSize: 18,
-                    color: AppColors.textPrimary,
+                    color: p.textPrimary,
                   ),
                 ),
               ),
@@ -80,7 +83,196 @@ class FigmaScreenHeader extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-/// Cart → Checkout → Payment → Confirm stepper from Figma.
+/// Icon + label tile used in Figma account / menu grids.
+class FigmaMenuTile extends StatelessWidget {
+  const FigmaMenuTile({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
+    final c = color ?? AppColors.primary;
+    return Material(
+      color: p.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: p.border),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: c.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: c, size: 22),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppFonts.style(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  color: p.textPrimary,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class FigmaListRow extends StatelessWidget {
+  const FigmaListRow({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.leading,
+    this.trailing,
+    this.onTap,
+    this.showDivider = true,
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget? leading;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
+    return Column(
+      children: [
+        Material(
+          color: p.surface,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  if (leading != null) ...[
+                    leading!,
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: AppFonts.style(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                            color: p.textPrimary,
+                          ),
+                        ),
+                        if (subtitle != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle!,
+                            style: AppFonts.style(
+                              fontSize: 12,
+                              color: p.textMuted,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  trailing ??
+                      Icon(
+                        Icons.chevron_right,
+                        size: 18,
+                        color: p.textMuted,
+                      ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (showDivider)
+          Divider(
+            height: 1,
+            color: p.border,
+            indent: 16,
+            endIndent: 16,
+          ),
+      ],
+    );
+  }
+}
+
+class FigmaSectionCard extends StatelessWidget {
+  const FigmaSectionCard({
+    super.key,
+    required this.title,
+    required this.children,
+  });
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: p.surface,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            child: Text(
+              title.toUpperCase(),
+              style: AppFonts.style(
+                fontWeight: FontWeight.w700,
+                fontSize: 11,
+                letterSpacing: 0.8,
+                color: p.textMuted,
+              ),
+            ),
+          ),
+          Divider(height: 1, color: p.border),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
 class CheckoutStepper extends StatelessWidget {
   const CheckoutStepper({super.key, required this.activeStep});
 
@@ -91,8 +283,9 @@ class CheckoutStepper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
     return Container(
-      color: Colors.white,
+      color: p.surface,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       child: Row(
         children: [
@@ -102,7 +295,7 @@ class CheckoutStepper extends StatelessWidget {
                 child: Container(
                   height: 2,
                   margin: const EdgeInsets.symmetric(horizontal: 4),
-                  color: i < activeStep ? AppColors.success : AppColors.border,
+                  color: i < activeStep ? AppColors.success : p.border,
                 ),
               ),
             _StepChip(
@@ -133,6 +326,7 @@ class _StepChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
     final highlight = done || active;
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -142,27 +336,27 @@ class _StepChip extends StatelessWidget {
           height: 22,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: highlight ? AppColors.success : const Color(0xFFEEF1F4),
+            color: highlight ? AppColors.success : p.inputFill,
             shape: BoxShape.circle,
           ),
           child: done
               ? const Icon(Icons.check, size: 12, color: Colors.white)
               : Text(
                   '$index',
-                  style: GoogleFonts.manrope(
+                  style: AppFonts.style(
                     fontWeight: FontWeight.w700,
                     fontSize: 11,
-                    color: highlight ? Colors.white : const Color(0xFF8A93A3),
+                    color: highlight ? Colors.white : p.textMuted,
                   ),
                 ),
         ),
         const SizedBox(width: 6),
         Text(
           label,
-          style: GoogleFonts.manrope(
+          style: AppFonts.style(
             fontWeight: FontWeight.w700,
             fontSize: 11.5,
-            color: highlight ? AppColors.success : const Color(0xFF8A93A3),
+            color: highlight ? AppColors.success : p.textMuted,
           ),
         ),
       ],
@@ -189,6 +383,7 @@ class FigmaSettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
     return Column(
       children: [
         InkWell(
@@ -210,64 +405,22 @@ class FigmaSettingsTile extends StatelessWidget {
                 Expanded(
                   child: Text(
                     label,
-                    style: GoogleFonts.manrope(
+                    style: AppFonts.style(
                       fontWeight: FontWeight.w600,
                       fontSize: 14,
-                      color: AppColors.textPrimary,
+                      color: p.textPrimary,
                     ),
                   ),
                 ),
                 trailing ??
-                    const Icon(Icons.chevron_right, size: 18, color: AppColors.textMuted),
+                    Icon(Icons.chevron_right, size: 18, color: p.textMuted),
               ],
             ),
           ),
         ),
         if (showDivider)
-          const Divider(height: 1, color: AppColors.borderLight, indent: 16, endIndent: 16),
+          Divider(height: 1, color: p.border, indent: 16, endIndent: 16),
       ],
-    );
-  }
-}
-
-class FigmaSectionCard extends StatelessWidget {
-  const FigmaSectionCard({
-    super.key,
-    required this.title,
-    required this.children,
-  });
-
-  final String title;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-            child: Text(
-              title.toUpperCase(),
-              style: GoogleFonts.manrope(
-                fontWeight: FontWeight.w700,
-                fontSize: 11,
-                letterSpacing: 0.8,
-                color: AppColors.textMuted,
-              ),
-            ),
-          ),
-          const Divider(height: 1, color: AppColors.borderLight),
-          ...children,
-        ],
-      ),
     );
   }
 }

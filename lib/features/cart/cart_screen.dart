@@ -2,13 +2,19 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
+import '../../core/theme/app_fonts.dart';
 
 import '../../constants/app_routes.dart';
+import '../../core/location/delivery_location.dart';
+import '../../core/location/delivery_location_provider.dart';
+import '../../core/network/api_response.dart';
+import '../../core/order/edit_order_session.dart';
 import '../../core/pricing/delivery_pricing.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_palette.dart';
 import '../../shared/widgets.dart';
 import '../../shared/figma_chrome.dart';
+import '../location/map_location_picker_screen.dart';
 import '../providers.dart';
 
 class CartScreen extends ConsumerStatefulWidget {
@@ -20,6 +26,7 @@ class CartScreen extends ConsumerStatefulWidget {
 
 class _CartScreenState extends ConsumerState<CartScreen> {
   final _promo = TextEditingController();
+  bool _applyingCoupon = false;
 
   @override
   void initState() {
@@ -33,13 +40,54 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     super.dispose();
   }
 
+  Future<void> _applyCoupon(double subtotal) async {
+    final code = _promo.text.trim();
+    if (code.isEmpty) {
+      showAppToast(context, 'Please enter a coupon code');
+      return;
+    }
+    setState(() => _applyingCoupon = true);
+    try {
+      final coupon =
+          await ref.read(orderRepositoryProvider).redeemCoupon(code);
+      if (!mounted) return;
+      if (coupon == null || coupon.id <= 0) {
+        showAppToast(context, 'Invalid coupon code');
+        ref.read(appliedCouponProvider.notifier).state = null;
+        return;
+      }
+      final min = coupon.minimumCartAmount ?? 0;
+      if (min > 0 && subtotal < min) {
+        showAppToast(
+          context,
+          'Minimum cart amount of ${formatRs(min)} required for this coupon',
+        );
+        ref.read(appliedCouponProvider.notifier).state = null;
+        return;
+      }
+      ref.read(appliedCouponProvider.notifier).state = coupon;
+      showAppToast(context, 'Coupon applied successfully!', isError: false);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ref.read(appliedCouponProvider.notifier).state = null;
+      showAppToast(context, e.message);
+    } catch (e) {
+      if (!mounted) return;
+      ref.read(appliedCouponProvider.notifier).state = null;
+      showAppToast(context, 'Failed to apply coupon');
+    } finally {
+      if (mounted) setState(() => _applyingCoupon = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(cartProvider);
+    final coupon = ref.watch(appliedCouponProvider);
     final itemCount = async.valueOrNull?.fold<int>(0, (s, e) => s + e.quantity) ?? 0;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppPalette.of(context).background,
       body: Column(
         children: [
           FigmaScreenHeader(
@@ -53,7 +101,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
               ),
               child: Text(
                 '$itemCount items',
-                style: GoogleFonts.manrope(
+                style: AppFonts.style(
                   fontWeight: FontWeight.w700,
                   fontSize: 13,
                   color: AppColors.primary,
@@ -61,6 +109,57 @@ class _CartScreenState extends ConsumerState<CartScreen> {
               ),
             ),
           ),
+          if (ref.watch(editOrderSessionProvider) != null)
+            Material(
+              color: const Color(0xFFE7F6EE),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.edit_outlined,
+                      size: 18,
+                      color: Color(0xFF126B3E),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Editing order ${ref.watch(editOrderSessionProvider)!.trackingNumber}',
+                        style: AppFonts.style(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          color: const Color(0xFF126B3E),
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        await ref
+                            .read(editOrderSessionProvider.notifier)
+                            .clear();
+                        await ref.read(cartProvider.notifier).clear();
+                        if (!context.mounted) return;
+                        showAppToast(
+                          context,
+                          'Edit cancelled. You are back to normal shopping.',
+                          isError: false,
+                        );
+                        context.go(AppRoutes.home);
+                      },
+                      child: Text(
+                        'Cancel',
+                        style: AppFonts.style(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.error,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           const CheckoutStepper(activeStep: 1),
           Expanded(
             child: async.when(
@@ -70,9 +169,9 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.shopping_cart_outlined, size: 56, color: AppColors.textMuted),
+                        Icon(Icons.shopping_cart_outlined, size: 56, color: AppColors.textMuted),
                         const SizedBox(height: 12),
-                        Text('Your cart is empty', style: GoogleFonts.manrope(fontWeight: FontWeight.w700)),
+                        Text('Your cart is empty', style: AppFonts.style(fontWeight: FontWeight.w700)),
                         const SizedBox(height: 16),
                         ElevatedButton(
                           onPressed: () => context.go(AppRoutes.home),
@@ -86,219 +185,299 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                   0,
                   (s, e) => s + e.product.displayPrice * e.quantity,
                 );
-                return ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                final couponDiscount = coupon?.discountFor(total) ?? 0;
+                final settings = ref.watch(settingsProvider).valueOrNull;
+                return Column(
                   children: [
-                    ...items.map((item) {
-                      final url = resolveMediaUrl(item.product.image?.best);
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.04),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 68,
-                              height: 68,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: AppColors.borderLight),
-                              ),
-                              clipBehavior: Clip.antiAlias,
-                              child: url.isEmpty
-                                  ? const ColoredBox(color: AppColors.chipBg)
-                                  : CachedNetworkImage(imageUrl: url, fit: BoxFit.contain),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item.product.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.manrope(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  if ((item.product.quantity ?? 0) > 0) ...[
-                                    Text(
-                                      'Stock: ${item.product.quantity}',
-                                      style: GoogleFonts.manrope(
-                                        fontSize: 11,
-                                        color: AppColors.textMuted,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                  ],
-                                  Text(
-                                    formatRs(item.product.displayPrice),
-                                    style: GoogleFonts.manrope(
-                                      color: AppColors.primary,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 15,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Container(
-                              height: 35,
-                              decoration: BoxDecoration(
-                                color: AppColors.inputFill,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                    FreeDeliveryBar(
+                      subtotal: total,
+                      threshold: settings?.freeShippingAmount ?? 0,
+                      enabled: settings?.freeShipping == true,
+                    ),
+                    // Line items only — no rubber-band when the list is short.
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        physics: items.length <= 3
+                            ? const NeverScrollableScrollPhysics()
+                            : const ClampingScrollPhysics(),
+                        children: [
+                          ...items.map((item) {
+                            final url =
+                                resolveMediaUrl(item.product.image?.best);
+                            return WebCard(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(12),
                               child: Row(
                                 children: [
-                                  _QtyIcon(
-                                    label: '−',
-                                    color: AppColors.textSecondary,
-                                    onTap: () => ref
-                                        .read(cartProvider.notifier)
-                                        .setQty(item, item.quantity - 1),
-                                  ),
-                                  SizedBox(
-                                    width: 28,
-                                    child: Text(
-                                      '${item.quantity}',
-                                      textAlign: TextAlign.center,
-                                      style: GoogleFonts.manrope(fontWeight: FontWeight.w800),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: SizedBox(
+                                      width: 72,
+                                      height: 72,
+                                      child: url.isEmpty
+                                          ? Container(color: AppColors.chipBg)
+                                          : CachedNetworkImage(
+                                              imageUrl: url,
+                                              fit: BoxFit.contain,
+                                              errorWidget: (_, __, ___) =>
+                                                  Container(
+                                                color: AppColors.chipBg,
+                                              ),
+                                            ),
                                     ),
                                   ),
-                                  _QtyIcon(
-                                    label: '+',
-                                    color: AppColors.primary,
-                                    onTap: () => ref
-                                        .read(cartProvider.notifier)
-                                        .setQty(item, item.quantity + 1),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item.product.name,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: AppFonts.style(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          formatRs(item.product.displayPrice),
+                                          style: AppFonts.style(
+                                            fontWeight: FontWeight.w800,
+                                            color: AppColors.textPrimary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Row(
+                                    children: [
+                                      _QtyIcon(
+                                        label: '−',
+                                        color: AppColors.textMuted,
+                                        onTap: () => ref
+                                            .read(cartProvider.notifier)
+                                            .setQty(item, item.quantity - 1),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                        ),
+                                        child: Text(
+                                          '${item.quantity}',
+                                          style: AppFonts.style(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      _QtyIcon(
+                                        label: '+',
+                                        color: AppColors.primary,
+                                        onTap: () => ref
+                                            .read(cartProvider.notifier)
+                                            .setQty(item, item.quantity + 1),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: const Color(0xFFC8E6F5),
-                          style: BorderStyle.solid,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.local_offer_outlined, size: 18, color: AppColors.primary),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: TextField(
-                              controller: _promo,
-                              decoration: const InputDecoration(
-                                hintText: 'Enter promo code',
-                                border: InputBorder.none,
-                                enabledBorder: InputBorder.none,
-                                focusedBorder: InputBorder.none,
-                                filled: false,
-                                isDense: true,
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                            ),
-                          ),
-                          Material(
-                            color: AppColors.primaryMid,
-                            borderRadius: BorderRadius.circular(10),
-                            child: InkWell(
-                              onTap: () {},
-                              borderRadius: BorderRadius.circular(10),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                                child: Text(
-                                  'Apply',
-                                  style: GoogleFonts.manrope(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
+                            );
+                          }),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                      ),
+                    // Promo / delivery / summary stay pinned — no empty scroll.
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            'Order Summary',
-                            style: GoogleFonts.manrope(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
+                          WebCard(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
                             ),
-                          ),
-                          const SizedBox(height: 14),
-                          _SummaryRow(label: 'Subtotal', value: formatRs(total)),
-                          const SizedBox(height: 10),
-                          ..._deliveryRows(ref, total),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            child: Divider(color: AppColors.borderLight),
-                          ),
-                          Row(
-                            children: [
-                              Text(
-                                'Total',
-                                style: GoogleFonts.manrope(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                formatRs(
-                                  total +
-                                      _quote(ref, total).fee,
-                                ),
-                                style: GoogleFonts.manrope(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 18,
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.local_offer_outlined,
+                                  size: 18,
                                   color: AppColors.primary,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _promo,
+                                    decoration: InputDecoration(
+                                      hintText: coupon == null
+                                          ? 'Enter promo code'
+                                          : 'Applied: ${coupon.code ?? _promo.text}',
+                                      border: InputBorder.none,
+                                      enabledBorder: InputBorder.none,
+                                      focusedBorder: InputBorder.none,
+                                      filled: false,
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
+                                ),
+                                if (coupon != null)
+                                  TextButton(
+                                    onPressed: () {
+                                      ref
+                                          .read(appliedCouponProvider.notifier)
+                                          .state = null;
+                                      _promo.clear();
+                                      showAppToast(
+                                        context,
+                                        'Coupon removed',
+                                        isError: false,
+                                      );
+                                    },
+                                    child: Text(
+                                      'Remove',
+                                      style: AppFonts.style(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12,
+                                        color: AppColors.error,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Material(
+                                    color: AppColors.primary,
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: InkWell(
+                                      onTap: _applyingCoupon
+                                          ? null
+                                          : () => _applyCoupon(total),
+                                      borderRadius: BorderRadius.circular(10),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 8,
+                                        ),
+                                        child: _applyingCoupon
+                                            ? const SizedBox(
+                                                width: 14,
+                                                height: 14,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: Colors.white,
+                                                ),
+                                              )
+                                            : Text(
+                                                'Apply',
+                                                style: AppFonts.style(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w700,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
-                          ..._freeShipHint(ref, total),
+                          const SizedBox(height: 10),
+                          _CartDeliveryCard(),
+                          const SizedBox(height: 10),
+                          WebCard(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Order Summary',
+                                  style: AppFonts.style(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                _SummaryRow(
+                                  label: 'Subtotal',
+                                  value: formatRs(total),
+                                ),
+                                const SizedBox(height: 8),
+                                if (couponDiscount > 0) ...[
+                                  _SummaryRow(
+                                    label: 'Coupon',
+                                    value: '- ${formatRs(couponDiscount)}',
+                                    valueColor: AppColors.successText,
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                                ..._deliveryRows(ref, total),
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8),
+                                  child: Divider(color: AppColors.borderLight),
+                                ),
+                                Row(
+                                  children: [
+                                    Text(
+                                      'Total',
+                                      style: AppFonts.style(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      formatRs(
+                                        total -
+                                            couponDiscount +
+                                            _quote(ref, total).fee,
+                                      ),
+                                      style: AppFonts.style(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 18,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                ..._freeShipHint(ref, total),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          WebGradientButton(
+                            label: ref.watch(editOrderSessionProvider) != null
+                                ? 'Update order →'
+                                : 'Proceed to Checkout →',
+                            onPressed: () {
+                              final editing =
+                                  ref.read(editOrderSessionProvider) != null;
+                              final loggedIn = ref
+                                      .read(authStateProvider)
+                                      .valueOrNull !=
+                                  null;
+                              final guestOk = ref
+                                      .read(settingsProvider)
+                                      .valueOrNull
+                                      ?.guestCheckout ??
+                                  true;
+                              if (!loggedIn && !guestOk && !editing) {
+                                showAppToast(
+                                  context,
+                                  'Please login first to checkout',
+                                  kind: AppToastKind.info,
+                                );
+                                context.push(AppRoutes.login);
+                                return;
+                              }
+                              context.push(AppRoutes.checkout);
+                            },
+                          ),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 18),
-                    BrandGradientButton(
-                      label: 'Proceed to Checkout →',
-                      onPressed: () => context.push(AppRoutes.checkout),
                     ),
                   ],
                 );
@@ -313,8 +492,13 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                       Text('$e', textAlign: TextAlign.center),
                       const SizedBox(height: 12),
                       OutlinedButton(
+                        onPressed: () => context.go(AppRoutes.home),
+                        child: const Text('Continue shopping'),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
                         onPressed: () => context.push(AppRoutes.login),
-                        child: const Text('Sign in to view cart'),
+                        child: const Text('Sign in'),
                       ),
                     ],
                   ),
@@ -342,27 +526,27 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     final shippingAsync = ref.watch(shippingClassProvider);
     if (shippingAsync.isLoading) {
       return [
-        const _SummaryRow(label: 'Delivery fee', value: '…'),
+        const _SummaryRow(label: 'Fulfillment', value: '…'),
       ];
     }
     final q = _quote(ref, subtotal);
     if (q.baseFee <= 0 && shippingAsync.valueOrNull == null) {
       return [
-        const _SummaryRow(label: 'Delivery fee', value: '—'),
+        const _SummaryRow(label: 'Fulfillment', value: '—'),
       ];
     }
     if (q.isFree) {
       return [
-        _SummaryRow(
-          label: 'Delivery fee',
-          value: 'FREE',
+        const _SummaryRow(
+          label: 'Fulfillment',
+          value: 'COMPLIMENTARY',
           valueColor: AppColors.successText,
         ),
       ];
     }
     return [
       _SummaryRow(
-        label: 'Delivery fee',
+        label: 'Fulfillment',
         value: formatRs(q.fee),
       ),
     ];
@@ -375,10 +559,10 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       return [
         const SizedBox(height: 10),
         Text(
-          'You qualify for free delivery',
-          style: GoogleFonts.manrope(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
+          'Your order qualifies for complimentary fulfillment!',
+          style: AppFonts.style(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
             color: AppColors.successText,
           ),
         ),
@@ -388,14 +572,112 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     return [
       const SizedBox(height: 10),
       Text(
-        'Add ${formatRs(need)} more for free delivery (orders over ${formatRs(q.threshold)})',
-        style: GoogleFonts.manrope(
-          fontSize: 12,
+        'Add ${formatRs(need)} more for complimentary fulfillment',
+        style: AppFonts.style(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w600,
           color: AppColors.textMuted,
           height: 1.35,
         ),
       ),
     ];
+  }
+}
+
+class _CartDeliveryCard extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final loggedIn = ref.watch(authStateProvider).valueOrNull != null;
+    final locAsync = ref.watch(deliveryLocationProvider);
+    final loc = locAsync.valueOrNull ?? DeliveryLocation.fallback;
+    final line = [
+      if ((loc.street ?? '').trim().isNotEmpty) loc.street!.trim(),
+      if ((loc.city ?? '').trim().isNotEmpty) loc.city!.trim(),
+    ].join(', ');
+
+    return WebCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          const Icon(Icons.place_outlined, size: 20, color: AppColors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Delivering to',
+                  style: AppFonts.style(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  line.isNotEmpty ? line : loc.label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppFonts.style(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    height: 1.35,
+                  ),
+                ),
+                if (!loggedIn)
+                  Text(
+                    'Guest delivery place — not saved to an account',
+                    style: AppFonts.style(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (loggedIn) {
+                context.push(AppRoutes.addresses);
+                return;
+              }
+              final result = await Navigator.of(context).push<MapPickResult>(
+                MaterialPageRoute(
+                  builder: (_) => MapLocationPickerScreen(
+                    initialLat: loc.lat,
+                    initialLng: loc.lng,
+                  ),
+                ),
+              );
+              if (result == null) return;
+              final next = DeliveryLocation(
+                label: result.label ??
+                    [
+                      if ((result.street ?? '').isNotEmpty) result.street,
+                      if ((result.city ?? '').isNotEmpty) result.city,
+                    ].whereType<String>().join(', '),
+                lat: result.lat,
+                lng: result.lng,
+                hasGps: true,
+                street: result.street,
+                city: result.city,
+              );
+              ref.read(deliveryLocationOverrideProvider.notifier).state = next;
+              await persistDeliveryLocation(next);
+              ref.read(needsDeliveryGateProvider.notifier).state = false;
+              ref.invalidate(deliveryLocationProvider);
+            },
+            child: Text(
+              'Change',
+              style: AppFonts.style(
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -414,13 +696,20 @@ class _SummaryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Text(label, style: GoogleFonts.manrope(color: AppColors.textSecondary, fontSize: 14)),
+        Text(
+          label,
+          style: AppFonts.style(
+            color: AppColors.textSecondary,
+            fontSize: AppFonts.body,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         const Spacer(),
         Text(
           value,
-          style: GoogleFonts.manrope(
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
+          style: AppFonts.style(
+            fontWeight: FontWeight.w700,
+            fontSize: AppFonts.body,
             color: valueColor ?? AppColors.textPrimary,
           ),
         ),
@@ -447,7 +736,12 @@ class _QtyIcon extends StatelessWidget {
         child: Center(
           child: Text(
             label,
-            style: TextStyle(fontSize: 18, color: color, height: 1),
+            style: AppFonts.style(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: color,
+              height: 1,
+            ),
           ),
         ),
       ),

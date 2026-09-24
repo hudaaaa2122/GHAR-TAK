@@ -241,7 +241,7 @@ class InfoContent {
       category: 'Billing & Payments',
       question: 'Is there a minimum order amount?',
       answer:
-          'A small minimum may apply in some areas. Free delivery applies on orders over the amount configured in store settings (currently Rs. 3,000 on production).',
+          'A small minimum may apply in some areas. Complimentary fulfillment applies on orders over the amount configured in store settings (currently Rs. 3,000 on production).',
     ),
     FaqItem(
       category: 'Fulfillment',
@@ -350,4 +350,143 @@ class InfoContent {
     ('120+', 'Cities served'),
     ('<1hr', 'Average delivery time'),
   ];
+
+  static const teamMembers = [
+    TeamMember(
+      name: 'Sarah Johnson',
+      position: 'CEO & Founder',
+      department: 'Leadership',
+      bio:
+          'With over 15 years of experience in the industry, Sarah leads our company with vision and passion for innovation.',
+    ),
+    TeamMember(
+      name: 'Michael Chen',
+      position: 'CTO',
+      department: 'Technology',
+      bio:
+          'Michael drives our technical strategy and ensures we stay at the forefront of technological advancements.',
+    ),
+    TeamMember(
+      name: 'Emily Rodriguez',
+      position: 'Head of Design',
+      department: 'Design',
+      bio:
+          'Emily brings creative vision to our products, ensuring exceptional user experiences.',
+    ),
+    TeamMember(
+      name: 'David Kim',
+      position: 'Senior Developer',
+      department: 'Engineering',
+      bio:
+          'David specializes in frontend development and creates seamless, responsive experiences.',
+    ),
+    TeamMember(
+      name: 'Lisa Thompson',
+      position: 'Product Manager',
+      department: 'Product',
+      bio:
+          'Lisa bridges business needs and technical solutions, delivering products users love.',
+    ),
+    TeamMember(
+      name: 'Alex Martinez',
+      position: 'Marketing Director',
+      department: 'Marketing',
+      bio:
+          'Alex crafts compelling brand stories and drives growth through innovative marketing.',
+    ),
+  ];
+
+  static const sitemapSections = [
+    SitemapSection(
+      title: 'Main Pages',
+      pages: [
+        SitemapLink(name: 'Home', route: '/', description: 'Welcome to our store'),
+        SitemapLink(name: 'About Us', route: '/about', description: 'Learn about our company'),
+        SitemapLink(name: 'Contact Us', route: '/contact', description: 'Get in touch with our team'),
+        SitemapLink(name: 'Sitemap', route: '/site-map', description: 'Complete app overview'),
+        SitemapLink(name: 'Our Team', route: '/team', description: 'Meet the people behind Gher Tak'),
+      ],
+    ),
+    SitemapSection(
+      title: 'Products & Shopping',
+      pages: [
+        SitemapLink(
+          name: 'Best Sellers',
+          route: '/products?endpoint=best-sellers',
+          description: 'Most popular items',
+        ),
+        SitemapLink(
+          name: 'Offers',
+          route: '/products?endpoint=sales',
+          description: 'Special offers and discounts',
+        ),
+        SitemapLink(
+          name: 'Limited Edition',
+          route: '/products?endpoint=limited-edition',
+          description: 'Shop by low stock',
+        ),
+        SitemapLink(
+          name: 'New Arrivals',
+          route: '/products?endpoint=new-arrivals',
+          description: 'Fresh products',
+        ),
+      ],
+    ),
+    SitemapSection(
+      title: 'Account & Orders',
+      pages: [
+        SitemapLink(name: 'Profile', route: '/profile', description: 'Your account'),
+        SitemapLink(name: 'Notifications', route: '/notifications', description: 'Order updates'),
+        SitemapLink(name: 'Cart', route: '/cart', description: 'Your cart'),
+        SitemapLink(name: 'Order History', route: '/orders', description: 'View past orders'),
+        SitemapLink(name: 'Wishlist', route: '/wishlist', description: 'Saved items'),
+        SitemapLink(name: 'Addresses', route: '/addresses', description: 'Manage addresses'),
+        SitemapLink(name: 'Wallet', route: '/wallet', description: 'Wallet balance'),
+      ],
+    ),
+    SitemapSection(
+      title: 'Help & Support',
+      pages: [
+        SitemapLink(name: 'Customer Support', route: '/support', description: 'Get help and support'),
+        SitemapLink(name: 'FAQ', route: '/faq', description: 'Frequently asked questions'),
+        SitemapLink(name: 'Privacy Policy', route: '/privacy', description: 'How we use your data'),
+        SitemapLink(name: 'Returns', route: '/returns', description: 'Return and refund policy'),
+        SitemapLink(name: 'Track Order', route: '/track-order', description: 'Track your package'),
+        SitemapLink(name: 'Terms & Conditions', route: '/terms', description: 'Terms of use'),
+      ],
+    ),
+  ];
+}
+
+class TeamMember {
+  const TeamMember({
+    required this.name,
+    required this.position,
+    required this.department,
+    required this.bio,
+  });
+
+  final String name;
+  final String position;
+  final String department;
+  final String bio;
+}
+
+class SitemapSection {
+  const SitemapSection({required this.title, required this.pages});
+
+  final String title;
+  final List<SitemapLink> pages;
+}
+
+class SitemapLink {
+  const SitemapLink({
+    required this.name,
+    required this.route,
+    required this.description,
+  });
+
+  final String name;
+  final String route;
+  final String description;
 }

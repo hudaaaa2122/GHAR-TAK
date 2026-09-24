@@ -29,12 +29,16 @@ class ApiEndpoints {
   static const String productNewArrivals = '/product/new-arrivals';
   static String productRead(String idOrSlug) => '/product/read/$idOrSlug';
   static const String categoryList = '/category/list';
+  /// Website home “Shop by category” tiles (backend first-product image fallback).
+  static const String categoryBrowseTiles = '/category/browse-tiles';
   static const String bannerList = '/banner/list';
   static const String manufacturerList = '/manufacturer/list';
 
   // —— Cart (customer) ——
   static const String cartMy = '/cart/my-cart';
   static const String cartAdd = '/cart/add';
+  /// Website EditOrderDialog uses this to load order items into cart.
+  static const String cartBulkCreate = '/cart/bulk-create';
   static String cartUpdate(int productId) => '/cart/update/$productId';
   static String cartRemove(int productId) => '/cart/remove/$productId';
   static const String cartDeleteAll = '/cart/delete-all';
@@ -52,6 +56,9 @@ class ApiEndpoints {
   static String orderTracking(String tracking) => '/order/tracking/$tracking';
   static String orderCancel(String id) => '/order/$id/cancel';
   static String orderCustomerEdit(String id) => '/order/$id/customer-edit';
+  static String orderReviewByOrder(String orderId) =>
+      '/order-review/order/$orderId';
+  static const String orderReviewCreate = '/order-review/create';
 
   // —— Address ——
   static const String addressList = '/address/list';
@@ -72,6 +79,9 @@ class ApiEndpoints {
   static const String wishlistMine = '/wishlist/my-wishlist';
   static const String wishlistAdd = '/wishlist/add';
   static String wishlistRemove(int id) => '/wishlist/remove/$id';
+  static const String wishlistRemoveByProduct = '/wishlist/remove-by-product';
+  static String wishlistCheck(int productId) =>
+      '/wishlist/check/$productId';
 
   // —— Wallet ——
   static const String walletBalance = '/wallet/balance';
@@ -98,6 +108,13 @@ class ApiEndpoints {
 
   // —— Coupon ——
   static String couponRedeem(String code) => '/coupon/redeem/$code';
+
+  // —— Shop (become a seller) ——
+  static const String shopCreate = '/shop/create';
+  static const String shopMyShops = '/shop/my-shops';
+
+  // —— Contact / support ——
+  static const String contactSupport = '/contactus/support';
 
   // —— Settings ——
   static const String settings = '/settings';

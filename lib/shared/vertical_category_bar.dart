@@ -1,10 +1,14 @@
+import 'dart:math' as math;
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../core/theme/app_fonts.dart';
 import '../core/theme/vertical_theme.dart';
 
-/// Category strip from screen recording:
-/// frosted track · vertical ovals · caret slides + bounces · icon pinch.
+/// Frosted category strip with looping Wired-style icon motions
+/// and a liquid-glass track that tints to the active vertical color.
 class VerticalCategoryBar extends StatefulWidget {
   const VerticalCategoryBar({
     super.key,
@@ -43,22 +47,20 @@ class VerticalCategoryBar extends StatefulWidget {
 }
 
 class _VerticalCategoryBarState extends State<VerticalCategoryBar>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late final AnimationController _slide;
-  late final AnimationController _pinch;
-  late final AnimationController _bounce;
   late final CurvedAnimation _slideCurve;
 
-  String? _pinchSlug;
   int _fromIndex = 0;
   int _toIndex = 0;
 
-  static const _hPad = 8.0;
-  static const _gap = 8.0;
-  static const _pillH = 82.0;
-  static const _trackPadV = 6.0;
+  static const _hPad = 10.0;
+  static const _gap = 6.0;
+  static const _pillH = 64.0;
+  static const _trackPadV = 8.0;
   static const _caretH = 10.0;
-  static const _caretW = 18.0;
+  static const _caretW = 16.0;
+  static const _circle = 42.0;
 
   @override
   void initState() {
@@ -67,28 +69,18 @@ class _VerticalCategoryBarState extends State<VerticalCategoryBar>
     _fromIndex = _toIndex;
     _slide = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 480),
+      duration: const Duration(milliseconds: 520),
       value: 1,
     );
     _slideCurve = CurvedAnimation(
       parent: _slide,
-      // Overshoot bounce like the screen recording.
-      curve: Curves.elasticOut,
-    );
-    _pinch = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 520),
-    );
-    _bounce = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 420),
+      curve: Curves.easeOutCubic,
     );
   }
 
   @override
   void didUpdateWidget(covariant VerticalCategoryBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Sync if parent changed selection without our tap (e.g. deep link).
     if (oldWidget.selected != widget.selected) {
       final next = _indexOf(widget.selected);
       if (next != _toIndex) {
@@ -101,8 +93,6 @@ class _VerticalCategoryBarState extends State<VerticalCategoryBar>
   void dispose() {
     _slideCurve.dispose();
     _slide.dispose();
-    _pinch.dispose();
-    _bounce.dispose();
     super.dispose();
   }
 
@@ -116,15 +106,8 @@ class _VerticalCategoryBarState extends State<VerticalCategoryBar>
     setState(() {
       _fromIndex = _toIndex;
       _toIndex = nextIndex;
-      _pinchSlug = item.slug;
     });
     _slide
-      ..reset()
-      ..forward();
-    _pinch
-      ..reset()
-      ..forward();
-    _bounce
       ..reset()
       ..forward();
     if (notify && item.slug != widget.selected) {
@@ -134,19 +117,21 @@ class _VerticalCategoryBarState extends State<VerticalCategoryBar>
 
   void _onTap(_VertItem item) {
     final next = _indexOf(item.slug);
-    // Re-tap active → replay pinch/bounce only.
-    if (next == _toIndex) {
-      setState(() => _pinchSlug = item.slug);
-      _pinch
-        ..reset()
-        ..forward();
-      _bounce
-        ..reset()
-        ..forward();
-      return;
-    }
-    // Start animation immediately on tap (don't wait for parent rebuild).
+    if (next == _toIndex) return;
     _animateTo(next, notify: true);
+  }
+
+  Color _glassTint(double t) {
+    Color tintFor(String slug) {
+      final theme = VerticalTheme.of(slug);
+      // Mix soft + primary so grocery (teal) vs business (navy) read clearly.
+      return Color.lerp(theme.primarySoft, theme.primary, 0.42) ??
+          theme.primarySoft;
+    }
+
+    final from = tintFor(VerticalCategoryBar.items[_fromIndex].slug);
+    final to = tintFor(VerticalCategoryBar.items[_toIndex].slug);
+    return Color.lerp(from, to, t) ?? to;
   }
 
   @override
@@ -156,66 +141,84 @@ class _VerticalCategoryBarState extends State<VerticalCategoryBar>
         final count = VerticalCategoryBar.items.length;
         final trackH = _pillH + _trackPadV * 2;
         final innerW = constraints.maxWidth - _hPad * 2;
-        final pillW = (innerW - _gap * (count - 1)) / count;
+        final slotW = (innerW - _gap * (count - 1)) / count;
 
         return AnimatedBuilder(
-          animation: Listenable.merge([_slideCurve, _pinch, _bounce]),
+          animation: _slideCurve,
           builder: (context, _) {
             final t = _slideCurve.value;
             final caretIndex = _fromIndex + (_toIndex - _fromIndex) * t;
-            final caretCenter =
-                _hPad + caretIndex * (pillW + _gap) + pillW / 2;
+            final slotLeft = _hPad + caretIndex * (slotW + _gap);
+            final caretCenter = slotLeft + slotW / 2;
+            final highlightLeft = slotLeft + (slotW - _circle - 10) / 2;
+            final tint = _glassTint(t);
+            final activeTheme = VerticalTheme.of(
+              VerticalCategoryBar.items[_toIndex].slug,
+            );
 
             return SizedBox(
               height: trackH + _caretH + 2,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  // Frosted track (rounded capsule)
                   Positioned(
                     left: 0,
                     right: 0,
                     top: 0,
                     height: trackH,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(trackH / 2),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 280),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(trackH / 2),
+                            color: tint.withValues(alpha: 0.72),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.55),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: activeTheme.primary.withValues(
+                                  alpha: 0.22,
+                                ),
+                                blurRadius: 16,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: highlightLeft,
+                    top: _trackPadV + (_pillH - _circle) / 2 - 5,
+                    width: _circle + 10,
+                    height: _circle + 10,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(trackH / 2),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Colors.white.withValues(alpha: 0.45),
-                            const Color(0xFFB8DCEF).withValues(alpha: 0.35),
-                            Colors.white.withValues(alpha: 0.28),
-                          ],
-                        ),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.55),
-                          width: 1.2,
-                        ),
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.55),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.14),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
+                            color: Colors.white.withValues(alpha: 0.35),
+                            blurRadius: 12,
                           ),
                         ],
                       ),
                     ),
                   ),
-                  // Sliding caret under active pill
                   Positioned(
                     left: caretCenter - _caretW / 2,
                     top: trackH - 1,
                     width: _caretW,
                     height: _caretH,
-                    child: CustomPaint(
-                      painter: _CaretPainter(
-                        color: Colors.white.withValues(alpha: 0.95),
-                      ),
+                    child: const CustomPaint(
+                      painter: _CaretPainter(color: Colors.white),
                     ),
                   ),
-                  // Vertical oval pills
                   Positioned(
                     left: _hPad,
                     right: _hPad,
@@ -228,15 +231,11 @@ class _VerticalCategoryBarState extends State<VerticalCategoryBar>
                             i++) ...[
                           if (i > 0) const SizedBox(width: _gap),
                           Expanded(
-                            child: _OvalPill(
+                            child: _CategorySlot(
                               item: VerticalCategoryBar.items[i],
                               selected: i == _toIndex,
                               height: _pillH,
-                              pinch: _pinchSlug ==
-                                      VerticalCategoryBar.items[i].slug
-                                  ? _pinch
-                                  : null,
-                              bounce: i == _toIndex ? _bounce : null,
+                              circleSize: _circle,
                               onTap: () =>
                                   _onTap(VerticalCategoryBar.items[i]),
                             ),
@@ -269,125 +268,95 @@ class _VertItem {
   bool get isPng => asset.toLowerCase().endsWith('.png');
 }
 
-class _OvalPill extends StatelessWidget {
-  const _OvalPill({
+class _CategorySlot extends StatelessWidget {
+  const _CategorySlot({
     required this.item,
     required this.selected,
     required this.height,
+    required this.circleSize,
     required this.onTap,
-    this.pinch,
-    this.bounce,
   });
 
   final _VertItem item;
   final bool selected;
   final double height;
+  final double circleSize;
   final VoidCallback onTap;
-  final Animation<double>? pinch;
-  final Animation<double>? bounce;
 
   @override
   Widget build(BuildContext context) {
     final theme = VerticalTheme.of(item.slug);
 
-    Widget icon = SizedBox(
-      width: 32,
-      height: 32,
-      child: item.isPng
-          ? Image.asset(
-              item.asset,
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.medium,
-              isAntiAlias: true,
-              errorBuilder: (_, __, ___) => const Icon(
-                Icons.broken_image_outlined,
-                color: Colors.white,
-                size: 18,
-              ),
-            )
-          : SvgPicture.asset(
-              item.asset,
-              colorFilter: const ColorFilter.mode(
-                Colors.white,
-                BlendMode.srcIn,
-              ),
+    final iconChild = item.isPng
+        ? Image.asset(
+            item.asset,
+            width: 22,
+            height: 22,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
+            isAntiAlias: true,
+            color: Colors.white,
+            colorBlendMode: BlendMode.srcIn,
+            errorBuilder: (_, __, ___) => const Icon(
+              Icons.broken_image_outlined,
+              color: Colors.white,
+              size: 16,
             ),
-    );
-
-    if (pinch != null) {
-      icon = AnimatedBuilder(
-        animation: pinch!,
-        builder: (context, child) {
-          final t = pinch!.value;
-          late final double scale;
-          late final double glow;
-          if (t < 0.30) {
-            final p = Curves.easeIn.transform(t / 0.30);
-            scale = 1.0 - 0.28 * p;
-            glow = 0.55 * p;
-          } else {
-            final p = Curves.elasticOut.transform((t - 0.30) / 0.70);
-            scale = 0.72 + 0.40 * p;
-            glow = 0.55 * (1 - ((t - 0.30) / 0.70)).clamp(0.0, 1.0);
-          }
-          return Stack(
-            alignment: Alignment.center,
-            clipBehavior: Clip.none,
-            children: [
-              if (glow > 0.04)
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: glow * 0.5),
-                  ),
-                ),
-              Transform.scale(scale: scale, child: child),
-            ],
+          )
+        : SvgPicture.asset(
+            item.asset,
+            width: 22,
+            height: 22,
+            colorFilter: const ColorFilter.mode(
+              Colors.white,
+              BlendMode.srcIn,
+            ),
           );
-        },
-        child: icon,
-      );
-    }
 
-    Widget pill = Material(
+    return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(
           height: height,
-          decoration: BoxDecoration(
-            color: theme.primary,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: selected ? 0.95 : 0.2),
-              width: selected ? 2.4 : 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: selected
-                    ? theme.primaryDark.withValues(alpha: 0.9)
-                    : Colors.black.withValues(alpha: 0.18),
-                offset: Offset(0, selected ? 5 : 2),
-                blurRadius: selected ? 0 : 4,
-              ),
-            ],
-          ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              icon,
-              const SizedBox(height: 5),
+              Container(
+                width: circleSize,
+                height: circleSize,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: theme.primary,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(
+                      alpha: selected ? 0.95 : 0.22,
+                    ),
+                    width: selected ? 2.2 : 1,
+                  ),
+                ),
+                child: ClipOval(
+                  child: SizedBox(
+                    width: 26,
+                    height: 26,
+                    child: _WiredIconMotion(
+                      slug: item.slug,
+                      child: iconChild,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
               Text(
                 item.label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white,
+                style: AppFonts.style(
+                  color: selected
+                      ? theme.primaryDark
+                      : const Color(0xFF3A4250),
                   fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
                   fontSize: 11,
                   height: 1.05,
@@ -398,28 +367,102 @@ class _OvalPill extends StatelessWidget {
         ),
       ),
     );
+  }
+}
 
-    if (bounce != null) {
-      pill = AnimatedBuilder(
-        animation: bounce!,
-        builder: (context, child) {
-          final t = bounce!.value;
-          final scale = t < 0.32
-              ? 1.0 - 0.12 * (t / 0.32)
-              : 0.88 +
-                  0.18 * Curves.elasticOut.transform((t - 0.32) / 0.68);
-          return Transform.scale(scale: scale, child: child);
-        },
-        child: pill,
-      );
+/// Continuous per-vertical Wired-style motion (always looping).
+class _WiredIconMotion extends StatefulWidget {
+  const _WiredIconMotion({required this.slug, required this.child});
+
+  final String slug;
+  final Widget child;
+
+  @override
+  State<_WiredIconMotion> createState() => _WiredIconMotionState();
+}
+
+class _WiredIconMotionState extends State<_WiredIconMotion>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: _durationFor(widget.slug))
+      ..repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _WiredIconMotion oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.slug != widget.slug) {
+      _ctrl
+        ..duration = _durationFor(widget.slug)
+        ..repeat(reverse: true);
     }
+  }
 
-    return pill;
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Duration _durationFor(String slug) {
+    switch (slug) {
+      case 'grocery':
+        return const Duration(milliseconds: 900);
+      case 'pharmacy':
+        return const Duration(milliseconds: 1100);
+      case 'bakery':
+        return const Duration(milliseconds: 1400);
+      case 'business':
+        return const Duration(milliseconds: 1200);
+      default:
+        return const Duration(milliseconds: 1000);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) {
+        final t = Curves.easeInOut.transform(_ctrl.value);
+        switch (widget.slug) {
+          case 'grocery':
+            final bounce = Curves.easeOutBack.transform(_ctrl.value);
+            return Transform.translate(
+              offset: Offset(3.5 * (1 - bounce), 5.5 * (1 - bounce)),
+              child: Transform.rotate(
+                angle: -0.12 * (1 - bounce),
+                child: child,
+              ),
+            );
+          case 'pharmacy':
+            final angle = (t * 2 - 1) * 0.28;
+            return Transform.rotate(angle: angle, child: child);
+          case 'bakery':
+            final dx = (t * 2 - 1) * 5.5;
+            return Transform.translate(offset: Offset(dx, 0), child: child);
+          case 'business':
+            final tip = (t * 2 - 1) * 0.18;
+            final lift = math.sin(t * math.pi) * -2.2;
+            return Transform.translate(
+              offset: Offset(0, lift),
+              child: Transform.rotate(angle: tip, child: child),
+            );
+          default:
+            return child!;
+        }
+      },
+      child: widget.child,
+    );
   }
 }
 
 class _CaretPainter extends CustomPainter {
-  _CaretPainter({required this.color});
+  const _CaretPainter({required this.color});
 
   final Color color;
 

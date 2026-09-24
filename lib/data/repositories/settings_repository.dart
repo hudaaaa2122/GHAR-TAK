@@ -64,7 +64,7 @@ class SettingsRepository {
     if (AppConfig.useMockData) {
       return const ShippingClassModel(
         id: 1,
-        name: 'Shipping Charges',
+        name: 'Fulfillment Charges',
         amount: 500,
         type: 'fixed',
       );

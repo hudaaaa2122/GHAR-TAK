@@ -12,6 +12,10 @@ class FigmaAssets {
   /// Stacked lockup (mark above "Gher Tak") for headers.
   static const logoStacked = 'assets/figma/logos/logo_stacked.png';
   static const logoStackedWhite = 'assets/figma/logos/logo_stacked_white.png';
+  /// Website MainLogo (`latest-logo.png`) — horizontal lockup with tagline.
+  static const websiteLogo = 'assets/figma/logos/website_logo.png';
+  static const websiteLogoWhite = 'assets/figma/logos/website_logo_white.png';
+  static const websiteLogoSvg = 'assets/figma/logos/website_logo.svg';
 
   // —— Decorative ——
   static const blobTopLeft = 'assets/figma/icons/blob_top_left.svg';

@@ -63,7 +63,7 @@ class MockData {
   static final List<BannerModel> banners = [
     BannerModel(
       id: 1,
-      title: 'Free delivery this week',
+      title: 'Specials this week',
       image: MediaImage(original: '$_img/banner1/800/320'),
       link: '/products',
     ),
