@@ -35,16 +35,12 @@ class AuthRepository {
         phoneNo: MockData.demoUser.phoneNo,
         avatar: MockData.demoUser.avatar,
       );
-      // Persist off the critical path — never block navigation (emulator freeze).
-      unawaited(() async {
-        try {
-          await _storage.saveTokens(
-            accessToken: 'mock_google_access_token',
-            refreshToken: 'mock_google_refresh_token',
-          );
-          await _storage.saveUserJson(jsonEncode(user.toJson()));
-        } catch (_) {}
-      }());
+      // Persist before returning so cold start restores the session.
+      await _storage.saveTokens(
+        accessToken: 'mock_google_access_token',
+        refreshToken: 'mock_google_refresh_token',
+      );
+      await _storage.saveUserJson(jsonEncode(user.toJson()));
       return user;
     }
 
@@ -122,15 +118,11 @@ class AuthRepository {
         throw ApiException('Email and password are required');
       }
       final user = MockData.demoUser;
-      unawaited(() async {
-        try {
-          await _storage.saveTokens(
-            accessToken: 'mock_access_token',
-            refreshToken: 'mock_refresh_token',
-          );
-          await _storage.saveUserJson(jsonEncode(user.toJson()));
-        } catch (_) {}
-      }());
+      await _storage.saveTokens(
+        accessToken: 'mock_access_token',
+        refreshToken: 'mock_refresh_token',
+      );
+      await _storage.saveUserJson(jsonEncode(user.toJson()));
       return user;
     }
 
@@ -226,7 +218,7 @@ class AuthRepository {
 
   Future<UserModel?> restoreSession() async {
     final token = await _storage.accessToken;
-    if (token == null) return null;
+    if (token == null || token.isEmpty) return null;
     final json = await _storage.userJson;
     if (json != null) {
       try {
@@ -249,7 +241,7 @@ class AuthRepository {
         return user;
       }
     } catch (_) {
-      await _storage.clear();
+      // Keep tokens on transient failures so the user stays signed in.
     }
     return null;
   }
@@ -262,12 +254,27 @@ class AuthRepository {
     if (access == null || access.isEmpty) {
       throw ApiException(res.detail ?? 'No access token returned');
     }
-    await _storage.saveTokens(accessToken: access, refreshToken: refresh);
     final userRaw = data['user'];
     final user = userRaw is Map
         ? UserModel.fromJson(Map<String, dynamic>.from(userRaw))
         : UserModel(id: 0, email: data['email']?.toString());
-    await _storage.saveUserJson(jsonEncode(user.toJson()));
+    // Retry once — SharedPreferences can flake on cold emulators.
+    Object? lastError;
+    for (var i = 0; i < 2; i++) {
+      try {
+        await _storage.saveTokens(accessToken: access, refreshToken: refresh);
+        await _storage.saveUserJson(jsonEncode(user.toJson()));
+        await _storage.setIntroCompleted(true);
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e;
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+    }
+    if (lastError != null) {
+      throw ApiException('Could not save your login. Please try again.');
+    }
     return user;
   }
 

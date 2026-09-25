@@ -65,7 +65,7 @@ class SettingsRepository {
       return const ShippingClassModel(
         id: 1,
         name: 'Fulfillment Charges',
-        amount: 500,
+        amount: 550,
         type: 'fixed',
       );
     }

@@ -109,15 +109,15 @@ class _OrderSuccessScreenState extends ConsumerState<OrderSuccessScreen> {
               ),
               const SizedBox(height: 24),
               Text(
-                'Order Placed!',
+                'Order confirmed!',
                 style: AppFonts.style(
-                  fontSize: 26,
+                  fontSize: 24,
                   fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                'Your order has been confirmed and will be\non its way soon.',
+                'Thank you for your order. We\'ll send you updates as your items are prepared and delivered.',
                 textAlign: TextAlign.center,
                 style: AppFonts.style(
                   fontSize: 14,
@@ -128,7 +128,8 @@ class _OrderSuccessScreenState extends ConsumerState<OrderSuccessScreen> {
               const SizedBox(height: 24),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(16),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF3F5F7),
                   borderRadius: BorderRadius.circular(12),
@@ -136,32 +137,32 @@ class _OrderSuccessScreenState extends ConsumerState<OrderSuccessScreen> {
                 child: Column(
                   children: [
                     Text(
-                      'TRACKING NUMBER',
+                      'Tracking number',
                       style: AppFonts.style(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.8,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
                         color: AppColors.textMuted,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Flexible(
+                        Expanded(
                           child: Text(
                             displayId,
-                            softWrap: true,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.center,
                             style: AppFonts.style(
-                              fontSize: 18,
+                              fontSize: 14,
                               fontWeight: FontWeight.w800,
                               color: AppColors.checkoutConfirm,
                             ),
                           ),
                         ),
                         if (hasTracking) ...[
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 4),
                           IconButton(
                             tooltip: 'Copy tracking number',
                             onPressed: () => _copyTracking(displayId),
@@ -170,14 +171,15 @@ class _OrderSuccessScreenState extends ConsumerState<OrderSuccessScreen> {
                               backgroundColor: _copied
                                   ? const Color(0xFFE8F5F7)
                                   : Colors.transparent,
-                              minimumSize: const Size(36, 36),
+                              minimumSize: const Size(32, 32),
                               padding: EdgeInsets.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
                             icon: Icon(
                               _copied
                                   ? Icons.check_rounded
                                   : Icons.copy_rounded,
-                              size: 20,
+                              size: 18,
                             ),
                           ),
                         ],

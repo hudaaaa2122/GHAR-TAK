@@ -1006,6 +1006,20 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   final _guestPhone = TextEditingController();
   final _guestEmail = TextEditingController();
 
+  /// Website checkout `billing_address` — house/flat details after map pin.
+  final _streetCtrl = TextEditingController();
+  final _postalCtrl = TextEditingController();
+  String _province = 'Capital';
+  String _city = 'Islamabad';
+  double? _pinLat;
+  double? _pinLng;
+
+  static const _checkoutProvinces = ['Punjab', 'Capital'];
+  static const _checkoutCities = <String, List<String>>{
+    'Punjab': ['Rawalpindi'],
+    'Capital': ['Islamabad'],
+  };
+
   /// Website `getQuickDeliveryDates` — Today + next 3 days.
   List<DateTime> get _quickDates {
     final now = DateTime.now();
@@ -1405,18 +1419,108 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     _guestName.dispose();
     _guestPhone.dispose();
     _guestEmail.dispose();
+    _streetCtrl.dispose();
+    _postalCtrl.dispose();
     super.dispose();
   }
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final session = ref.read(editOrderSessionProvider);
       if (session?.orderNotes != null && session!.orderNotes!.isNotEmpty) {
         _notes.text = session.orderNotes!;
       }
+      await _prefillAddressDetailsFromLocation();
     });
+  }
+
+  String _normalizeProvince(String? raw, String? city) {
+    final s = (raw ?? '').toLowerCase();
+    final c = (city ?? '').toLowerCase();
+    if (s.contains('punjab') || c.contains('rawalpindi')) return 'Punjab';
+    if (s.contains('capital') ||
+        s.contains('islamabad') ||
+        c.contains('islamabad')) {
+      return 'Capital';
+    }
+    return 'Capital';
+  }
+
+  String _normalizeCity(String province, String? rawCity) {
+    final cities = _checkoutCities[province] ?? const ['Islamabad'];
+    final c = (rawCity ?? '').trim();
+    if (c.isNotEmpty && cities.contains(c)) return c;
+    final lower = c.toLowerCase();
+    for (final option in cities) {
+      if (option.toLowerCase() == lower) return option;
+    }
+    if (lower.contains('rawalpindi') && province == 'Punjab') {
+      return 'Rawalpindi';
+    }
+    return cities.first;
+  }
+
+  void _applyAddressDetails({
+    String? street,
+    String? city,
+    String? state,
+    String? postalCode,
+    double? lat,
+    double? lng,
+  }) {
+    final province = _normalizeProvince(state, city);
+    final mappedCity = _normalizeCity(province, city);
+    setState(() {
+      if (street != null && street.trim().isNotEmpty) {
+        _streetCtrl.text = street.trim();
+      }
+      if (postalCode != null) {
+        _postalCtrl.text = postalCode.trim();
+      }
+      _province = province;
+      _city = mappedCity;
+      if (lat != null) _pinLat = lat;
+      if (lng != null) _pinLng = lng;
+    });
+  }
+
+  Future<void> _prefillAddressDetailsFromLocation() async {
+    final loggedIn = ref.read(authStateProvider).valueOrNull != null;
+    if (loggedIn) {
+      final addresses = ref.read(addressesProvider).valueOrNull ?? [];
+      if (addresses.isNotEmpty) {
+        final defaults = addresses.where((a) => a.isDefault).toList();
+        final selected = addresses.firstWhere(
+          (a) =>
+              a.id ==
+              (_selectedAddressId ??
+                  (defaults.isNotEmpty
+                      ? defaults.first.id
+                      : addresses.first.id)),
+          orElse: () => addresses.first,
+        );
+        _applyAddressDetails(
+          street: selected.street,
+          city: selected.city,
+          state: selected.state,
+          postalCode: selected.postalCode,
+          lat: selected.lat,
+          lng: selected.lng,
+        );
+        return;
+      }
+    }
+    final loc = await ref.read(deliveryLocationProvider.future);
+    if (!mounted) return;
+    _applyAddressDetails(
+      street: (loc.street ?? '').trim().isNotEmpty ? loc.street : loc.label,
+      city: loc.city,
+      state: null,
+      lat: loc.lat,
+      lng: loc.lng,
+    );
   }
 
   @override
@@ -1529,7 +1633,85 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       ),
                       const SizedBox(height: 14),
                       _buildAddressPicker(ref),
+                      const SizedBox(height: 14),
+                      _buildAddressDetailsForm(),
                       if (ref.watch(authStateProvider).valueOrNull == null) ...[
+                        const SizedBox(height: 14),
+                        WebCard(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 14,
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Continue as guest',
+                                      style: AppFonts.style(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'No account needed — fill in your details below.',
+                                      style: AppFonts.style(
+                                        fontSize: 12.5,
+                                        color: AppColors.textMuted,
+                                        height: 1.35,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    'Have an account?',
+                                    style: AppFonts.style(
+                                      fontSize: 12,
+                                      color: AppColors.textMuted,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  OutlinedButton(
+                                    onPressed: () =>
+                                        context.push(AppRoutes.login),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppColors.primary,
+                                      side: const BorderSide(
+                                        color: AppColors.primary,
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 8,
+                                      ),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      'Sign in',
+                                      style: AppFonts.style(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
                         const SizedBox(height: 14),
                         Text(
                           'Contact for delivery',
@@ -1804,17 +1986,12 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
 
   Future<void> _changeDeliveryPlace() async {
-    final loggedIn = ref.read(authStateProvider).valueOrNull != null;
-    if (loggedIn) {
-      context.push(AppRoutes.addresses);
-      return;
-    }
     final current = ref.read(deliveryLocationProvider).valueOrNull;
     final result = await Navigator.of(context).push<MapPickResult>(
       MaterialPageRoute(
         builder: (_) => MapLocationPickerScreen(
-          initialLat: current?.lat,
-          initialLng: current?.lng,
+          initialLat: _pinLat ?? current?.lat,
+          initialLng: _pinLng ?? current?.lng,
         ),
       ),
     );
@@ -1831,15 +2008,174 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       street: result.street,
       city: result.city,
     );
-    // Session / local only — do not POST to address API for guests.
     ref.read(deliveryLocationOverrideProvider.notifier).state = loc;
     await persistDeliveryLocation(loc);
     ref.read(needsDeliveryGateProvider.notifier).state = false;
     ref.invalidate(deliveryLocationProvider);
+    _applyAddressDetails(
+      street: result.street ?? result.label,
+      city: result.city,
+      state: result.state,
+      postalCode: result.postalCode,
+      lat: result.lat,
+      lng: result.lng,
+    );
+    // Clear saved-address selection when using a fresh map pin (website map mode).
+    setState(() => _selectedAddressId = null);
     if (mounted) {
-      showAppToast(context, 'Delivery place updated', isError: false);
-      setState(() {});
+      showAppToast(
+        context,
+        'Pin set — add house / flat details below',
+        isError: false,
+      );
     }
+  }
+
+  Widget _buildAddressDetailsForm() {
+    final cities = _checkoutCities[_province] ?? const ['Islamabad'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text.rich(
+          TextSpan(
+            text: 'Street address ',
+            style: AppFonts.style(
+              fontWeight: FontWeight.w700,
+              fontSize: 12.5,
+              color: AppColors.textSecondary,
+            ),
+            children: [
+              TextSpan(
+                text: '*',
+                style: AppFonts.style(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                  color: AppColors.error,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _streetCtrl,
+          maxLines: 2,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+            hintText: 'House / flat, street, area',
+            hintStyle: AppFonts.style(
+              fontSize: 13,
+              color: AppColors.textMuted,
+            ),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Include apartment, floor, or house number so the rider can find you.',
+          style: AppFonts.style(
+            fontSize: 11.5,
+            color: AppColors.textMuted,
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text.rich(
+          TextSpan(
+            text: 'Province ',
+            style: AppFonts.style(
+              fontWeight: FontWeight.w700,
+              fontSize: 12.5,
+              color: AppColors.textSecondary,
+            ),
+            children: [
+              TextSpan(
+                text: '*',
+                style: AppFonts.style(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                  color: AppColors.error,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<String>(
+          key: ValueKey('province-$_province'),
+          initialValue: _province,
+          decoration: const InputDecoration(isDense: true),
+          items: [
+            for (final p in _checkoutProvinces)
+              DropdownMenuItem(value: p, child: Text(p)),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _province = value;
+              _city = _normalizeCity(value, null);
+            });
+          },
+        ),
+        const SizedBox(height: 12),
+        Text.rich(
+          TextSpan(
+            text: 'City ',
+            style: AppFonts.style(
+              fontWeight: FontWeight.w700,
+              fontSize: 12.5,
+              color: AppColors.textSecondary,
+            ),
+            children: [
+              TextSpan(
+                text: '*',
+                style: AppFonts.style(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                  color: AppColors.error,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<String>(
+          key: ValueKey('city-$_province-$_city'),
+          initialValue: cities.contains(_city) ? _city : cities.first,
+          decoration: const InputDecoration(isDense: true),
+          items: [
+            for (final c in cities)
+              DropdownMenuItem(value: c, child: Text(c)),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() => _city = value);
+          },
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Postal code',
+          style: AppFonts.style(
+            fontWeight: FontWeight.w700,
+            fontSize: 12.5,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _postalCtrl,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            hintText: 'e.g. 46000',
+            hintStyle: AppFonts.style(
+              fontSize: 13,
+              color: AppColors.textMuted,
+            ),
+            isDense: true,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildAddressPicker(WidgetRef ref) {
@@ -1895,7 +2231,17 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           children: [
             for (final a in addresses) ...[
               InkWell(
-                onTap: () => setState(() => _selectedAddressId = a.id),
+                onTap: () {
+                  setState(() => _selectedAddressId = a.id);
+                  _applyAddressDetails(
+                    street: a.street,
+                    city: a.city,
+                    state: a.state,
+                    postalCode: a.postalCode,
+                    lat: a.lat,
+                    lng: a.lng,
+                  );
+                },
                 borderRadius: BorderRadius.circular(12),
                 child: Container(
                   width: double.infinity,
@@ -2018,11 +2364,24 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     if (shippingAsync.isLoading) {
       return [_totalRow('Fulfillment', '…')];
     }
-    final q = _checkoutQuote(subtotal);
-    if (q.baseFee <= 0 && shippingAsync.valueOrNull == null) {
-      return [_totalRow('Fulfillment', '—')];
+    if (shippingAsync.hasError) {
+      return [
+        _totalRow('Fulfillment', 'Error', valueColor: AppColors.error),
+      ];
     }
-    if (q.isFree) {
+    final q = _checkoutQuote(subtotal);
+    // Website: ~~Rs. 550~~ COMPLIMENTARY when free-shipping discount applies.
+    if (q.discount > 0 && q.baseFee > 0) {
+      return [
+        _totalRow(
+          'Fulfillment',
+          'COMPLIMENTARY',
+          valueColor: AppColors.successText,
+          struckValue: formatRs(q.baseFee),
+        ),
+      ];
+    }
+    if (q.fee <= 0) {
       return [
         _totalRow(
           'Fulfillment',
@@ -2071,6 +2430,19 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     final user = ref.read(authStateProvider).valueOrNull;
     final loggedIn = user != null;
 
+    final street = _streetCtrl.text.trim();
+    if (street.isEmpty) {
+      showAppToast(
+        context,
+        'Please enter street address (house / flat, street, area)',
+      );
+      return;
+    }
+    if (_city.trim().isEmpty || _province.trim().isEmpty) {
+      showAppToast(context, 'Please select city and province');
+      return;
+    }
+
     late final Map<String, dynamic> shipping;
     String? addressTitle;
     int? addressId;
@@ -2089,7 +2461,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       }
       final loc = ref.read(deliveryLocationProvider).valueOrNull ??
           DeliveryLocation.fallback;
-      if (loc.lat == null || loc.lng == null) {
+      final lat = _pinLat ?? loc.lat;
+      final lng = _pinLng ?? loc.lng;
+      if (lat == null || lng == null) {
         showAppToast(context, 'Please set a delivery place on the map');
         return;
       }
@@ -2098,35 +2472,29 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         'phone': phone,
         if (_guestEmail.text.trim().isNotEmpty)
           'email': _guestEmail.text.trim(),
-        'street': (loc.street ?? '').isNotEmpty ? loc.street : loc.label,
-        'city': loc.city ?? 'Islamabad',
-        'state': 'Islamabad Capital Territory',
+        'street': street,
+        'city': _city,
+        'state': _province,
+        if (_postalCtrl.text.trim().isNotEmpty)
+          'postal_code': _postalCtrl.text.trim(),
         'country': 'Pakistan',
         'title': 'Delivery',
-        'location': {'lat': loc.lat, 'lng': loc.lng},
+        'location': {'lat': lat, 'lng': lng},
       };
       addressTitle = 'Delivery';
     } else {
       final addresses = ref.read(addressesProvider).valueOrNull ?? [];
-      if (addresses.isEmpty) {
-        showAppToast(context, 'Please add an address first');
-        context.push(AppRoutes.addresses);
-        return;
+      AddressModel? address;
+      if (_selectedAddressId != null && addresses.isNotEmpty) {
+        try {
+          address = addresses.firstWhere((a) => a.id == _selectedAddressId);
+        } catch (_) {
+          address = null;
+        }
       }
-      final defaults = addresses.where((a) => a.isDefault).toList();
-      final id = _selectedAddressId ??
-          (defaults.isNotEmpty ? defaults.first.id : addresses.first.id);
-      final address = addresses.firstWhere((a) => a.id == id);
-      if ((address.street ?? '').isEmpty || (address.city ?? '').isEmpty) {
-        showAppToast(context, 'Selected address is incomplete');
-        return;
-      }
-      if (address.lat == null || address.lng == null) {
-        showAppToast(context, 'Set a map pin for this address');
-        return;
-      }
-      phone = (address.phone?.isNotEmpty == true)
-          ? address.phone!
+
+      phone = (address?.phone?.isNotEmpty == true)
+          ? address!.phone!
           : (user.phoneNo ?? '');
       if (phone.trim().isEmpty) {
         showAppToast(
@@ -2135,12 +2503,33 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         );
         return;
       }
-      shipping = address.toShippingPayload(
-        customerName: user.name ?? 'Customer',
-        customerPhone: phone,
-      );
-      addressTitle = address.title;
-      addressId = address.id;
+
+      final lat = _pinLat ?? address?.lat;
+      final lng = _pinLng ?? address?.lng;
+      if (lat == null || lng == null) {
+        showAppToast(
+          context,
+          'Set a map pin for this address (tap Change)',
+        );
+        return;
+      }
+
+      shipping = {
+        'name': user.name ?? 'Customer',
+        'phone': phone,
+        if ((user.email ?? '').trim().isNotEmpty) 'email': user.email,
+        'street': street,
+        'city': _city,
+        'state': _province,
+        if (_postalCtrl.text.trim().isNotEmpty)
+          'postal_code': _postalCtrl.text.trim(),
+        'country': address?.country ?? 'Pakistan',
+        'title': address?.title ?? 'Delivery',
+        'is_default': address?.isDefault ?? false,
+        'location': {'lat': lat, 'lng': lng},
+      };
+      addressTitle = address?.title ?? 'Delivery';
+      addressId = address?.id;
     }
 
     final chipNotes = _noteChips.map((i) => _chipLabels[i].$2).join('; ');
@@ -2672,7 +3061,12 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     );
   }
 
-  Widget _totalRow(String label, String value, {Color? valueColor}) {
+  Widget _totalRow(
+    String label,
+    String value, {
+    Color? valueColor,
+    String? struckValue,
+  }) {
     return Row(
       children: [
         Text(
@@ -2684,6 +3078,18 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           ),
         ),
         const Spacer(),
+        if (struckValue != null && struckValue.isNotEmpty) ...[
+          Text(
+            struckValue,
+            style: AppFonts.style(
+              fontWeight: FontWeight.w500,
+              fontSize: 12,
+              color: AppColors.textMuted,
+              decoration: TextDecoration.lineThrough,
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
         Text(
           value,
           style: AppFonts.style(

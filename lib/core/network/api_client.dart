@@ -78,8 +78,14 @@ class ApiClient {
       if (access == null) return false;
       await _storage.saveTokens(accessToken: access, refreshToken: newRefresh);
       return true;
+    } on DioException catch (e) {
+      // Only drop the session on definitive auth rejection — not network blips.
+      final code = e.response?.statusCode;
+      if (code == 401 || code == 403) {
+        await _storage.clear();
+      }
+      return false;
     } catch (_) {
-      await _storage.clear();
       return false;
     } finally {
       _refreshing = false;

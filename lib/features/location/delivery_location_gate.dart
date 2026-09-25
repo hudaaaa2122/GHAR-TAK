@@ -13,7 +13,6 @@ import '../../core/location/delivery_location_provider.dart';
 import '../../core/location/geocode_address.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/models.dart';
-import '../../shared/web_ui.dart';
 import '../../shared/widgets.dart';
 import '../providers.dart';
 
@@ -69,20 +68,39 @@ class _DeliveryLocationGateSheetState
     super.dispose();
   }
 
+  void _fillSearchBar(String? text) {
+    final value = (text ?? '').trim();
+    if (value.isEmpty) return;
+    _searchCtrl.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
+  }
+
   Future<void> _bootstrap() async {
-    final current = ref.read(deliveryLocationProvider).valueOrNull;
-    if (current?.lat != null && current?.lng != null) {
-      setState(() {
-        _pin = LatLng(current!.lat!, current.lng!);
-        _label = current.label;
-        _street = current.street;
-        _city = current.city;
-      });
-      _mapController.move(_pin, 15);
-      await _checkZone();
-      return;
-    }
+    // Prefer live GPS so the search bar defaults to the current location.
     await _goToGps();
+    if (!mounted) return;
+    if (_label != null && _label!.trim().isNotEmpty) return;
+
+    final current = ref.read(deliveryLocationProvider).valueOrNull;
+    final lat = current?.lat;
+    final lng = current?.lng;
+    if (current == null || lat == null || lng == null) return;
+
+    setState(() {
+      _pin = LatLng(lat, lng);
+      _label = current.label;
+      _street = current.street;
+      _city = current.city;
+    });
+    final searchText = [
+      if ((current.street ?? '').trim().isNotEmpty) current.street!.trim(),
+      if ((current.city ?? '').trim().isNotEmpty) current.city!.trim(),
+    ].join(', ');
+    _fillSearchBar(searchText.isNotEmpty ? searchText : current.label);
+    _mapController.move(_pin, 15);
+    await _checkZone();
   }
 
   Future<void> _goToGps() async {
@@ -96,7 +114,11 @@ class _DeliveryLocationGateSheetState
         ),
       );
       if (!mounted) return;
-      setState(() => _pin = LatLng(pos.latitude, pos.longitude));
+      setState(() {
+        _pin = LatLng(pos.latitude, pos.longitude);
+        _selectedAddressId = null;
+        _deliverable = null;
+      });
       _mapController.move(_pin, 16);
       await _reverseGeocode();
       await _checkZone();
@@ -124,13 +146,18 @@ class _DeliveryLocationGateSheetState
         if ((p.subLocality ?? '').trim().isNotEmpty) p.subLocality!.trim(),
         if ((p.locality ?? '').trim().isNotEmpty) p.locality!.trim(),
       ];
+      final label = parts.isEmpty
+          ? '${_pin.latitude.toStringAsFixed(4)}, ${_pin.longitude.toStringAsFixed(4)}'
+          : parts.join(', ');
+      final searchText = lineParts.isNotEmpty
+          ? [...lineParts, if (city.trim().isNotEmpty) city].join(', ')
+          : label;
       setState(() {
         _street = lineParts.isEmpty ? null : lineParts.join(', ');
         _city = city;
-        _label = parts.isEmpty
-            ? '${_pin.latitude.toStringAsFixed(4)}, ${_pin.longitude.toStringAsFixed(4)}'
-            : parts.join(', ');
+        _label = label;
       });
+      _fillSearchBar(searchText);
     } catch (_) {}
   }
 
@@ -190,6 +217,7 @@ class _DeliveryLocationGateSheetState
         _label = a.lineSummary.isEmpty ? a.title : a.lineSummary;
         _deliverable = null;
       });
+      _fillSearchBar(_label);
       _mapController.move(_pin, 16);
       await _checkZone();
       return;
@@ -219,6 +247,7 @@ class _DeliveryLocationGateSheetState
       _label = found.label;
       _deliverable = null;
     });
+    _fillSearchBar(found.label);
     _mapController.move(_pin, 16);
     await _checkZone();
   }

@@ -108,15 +108,25 @@ class _GherTakAppState extends ConsumerState<GherTakApp> {
       builder: (context, child) {
         // Keep AppColors text tokens in sync with Material brightness.
         AppColors.bindBrightness(Theme.of(context).brightness);
-        return DefaultTextStyle(
-          style: AppFonts.style(
-            color: AppColors.textPrimary,
-            fontSize: AppFonts.bodyMd,
-            fontWeight: FontWeight.w500,
-          ),
-          child: IconTheme(
-            data: IconThemeData(color: AppColors.textSecondary),
-            child: child ?? const SizedBox.shrink(),
+        // Match website mobile density — browsers don't apply Android
+        // accessibility textScale the same way Material does.
+        final mq = MediaQuery.of(context);
+        final clamped = mq.textScaler.clamp(
+          minScaleFactor: 0.90,
+          maxScaleFactor: 1.0,
+        );
+        return MediaQuery(
+          data: mq.copyWith(textScaler: clamped),
+          child: DefaultTextStyle(
+            style: AppFonts.style(
+              color: AppColors.textPrimary,
+              fontSize: AppFonts.body,
+              fontWeight: FontWeight.w500,
+            ),
+            child: IconTheme(
+              data: IconThemeData(color: AppColors.textSecondary),
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         );
       },

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import '../../core/theme/app_fonts.dart';
 
 import '../../constants/app_routes.dart';
@@ -48,12 +47,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Future<void> _maybeShowDeliveryGate() async {
     if (_gatePrompted || !mounted) return;
-    // Wait for location provider so persisted pin can clear the gate flag.
+    // Always prompt on each app session; default pin is current GPS in the gate.
     await ref.read(deliveryLocationProvider.future);
     if (!mounted) return;
-    if (!ref.read(needsDeliveryGateProvider)) return;
     _gatePrompted = true;
-    await showDeliveryLocationGate(context, barrierDismissible: true);
+    ref.read(needsDeliveryGateProvider.notifier).state = true;
+    await showDeliveryLocationGate(context, barrierDismissible: false);
   }
 
   @override
@@ -336,7 +335,7 @@ class _WebHomeHeader extends ConsumerWidget {
     final itemCount = ref.watch(catalogProductCountProvider).valueOrNull;
     final countLabel = itemCount == null
         ? 'Search items…'
-        : 'Search ${NumberFormat('#,###').format(itemCount)} items';
+        : 'Search ${formatRoundedItemCount(itemCount)} items';
 
     return ColoredBox(
       color: AppPalette.of(context).surface,
@@ -578,7 +577,7 @@ class _VerticalHeroPagerState extends State<_VerticalHeroPager> {
     return Column(
       children: [
         SizedBox(
-          height: 236,
+          height: 200,
           child: PageView.builder(
             controller: _controller,
             itemCount: slides.length,
@@ -593,7 +592,7 @@ class _VerticalHeroPagerState extends State<_VerticalHeroPager> {
                   headline: b.displayHeadline(theme.heroHeadline),
                   subtitle: (b.description?.trim().isNotEmpty == true)
                       ? b.description!.trim()
-                      : theme.heroSubtitle,
+                      : 'Delivered to your door in under an hour.',
                   eyebrow: b.subtitle?.trim().isNotEmpty == true
                       ? b.subtitle!.trim().toUpperCase()
                       : "TODAY'S DEAL",
@@ -714,6 +713,7 @@ class _VerticalHeroCard extends StatelessWidget {
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -757,7 +757,7 @@ class _VerticalHeroCard extends StatelessWidget {
                           height: 1.3,
                         ),
                       ),
-                      const Spacer(),
+                      const SizedBox(height: 12),
                       Material(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),

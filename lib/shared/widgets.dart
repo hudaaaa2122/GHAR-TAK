@@ -16,6 +16,13 @@ export 'brand_widgets.dart';
 export 'web_ui.dart';
 export 'app_toast.dart';
 
+/// Catalog search placeholder count — round down to thousands (`6100` → `6,000+`).
+String formatRoundedItemCount(int count) {
+  if (count < 1000) return NumberFormat('#,###').format(count);
+  final rounded = (count ~/ 1000) * 1000;
+  return '${NumberFormat('#,###').format(rounded)}+';
+}
+
 String resolveMediaUrl(String? path) {
   if (path == null || path.isEmpty) return '';
   var url = path.trim();
@@ -137,6 +144,7 @@ class FreeDeliveryBar extends StatelessWidget {
     final qualified = remaining <= 0;
 
     if (qualified) {
+      // One line only — omit the extra COMPLIMENTARY badge (shown in order summary).
       return Container(
         width: double.infinity,
         decoration: const BoxDecoration(
@@ -151,21 +159,15 @@ class FreeDeliveryBar extends StatelessWidget {
             Expanded(
               child: Text(
                 'Your order qualifies for complimentary fulfillment!',
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
                 style: AppFonts.style(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                   color: const Color(0xFF15824B),
                   height: 1.25,
                 ),
-              ),
-            ),
-            Text(
-              'COMPLIMENTARY',
-              style: AppFonts.style(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.6,
-                color: const Color(0xFF15824B),
               ),
             ),
           ],
@@ -396,7 +398,8 @@ class SectionHeader extends StatelessWidget {
                   title,
                   style: AppFonts.style(
                     fontWeight: FontWeight.w800,
-                    fontSize: 16,
+                    fontSize: 18,
+                    letterSpacing: -0.22,
                     color: AppColors.textPrimary,
                   ),
                 ),
@@ -404,7 +407,8 @@ class SectionHeader extends StatelessWidget {
                   Text(
                     subtitle!,
                     style: AppFonts.style(
-                      fontSize: 12,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -489,7 +493,7 @@ class ProductCard extends ConsumerWidget {
       }
     }
 
-    final nameSize = compact ? 10.5 : 12.5;
+    final nameSize = compact ? 11.0 : 13.0;
     final priceSize = compact ? 12.0 : 15.0;
     final strikeSize = compact ? 9.5 : 11.0;
     final p = AppPalette.of(context);

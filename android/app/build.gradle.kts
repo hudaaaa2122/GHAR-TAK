@@ -6,8 +6,13 @@ plugins {
 
 android {
     namespace = "com.ghertak.ghertak_mobile"
-    compileSdk = 37
-    ndkVersion = flutter.ndkVersion
+    // API 37 ships as platforms/android-37.0 — require minorApiLevel so AGP finds it.
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 0
+        }
+    }
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

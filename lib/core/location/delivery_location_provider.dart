@@ -58,13 +58,12 @@ final deliveryLocationProvider = FutureProvider<DeliveryLocation>((ref) async {
   final override = ref.watch(deliveryLocationOverrideProvider);
   if (override != null) return override;
 
+  // Prefer live GPS on cold start — do not skip the location gate from cache.
+  // Persisted pin is only a fallback if GPS is unavailable.
+  final live = await resolveDeliveryLocation();
+  if (live.hasGps) return live;
+
   final stored = await readPersistedDeliveryLocation();
-  if (stored != null) {
-    // Already confirmed previously — skip forced gate.
-    Future.microtask(() {
-      ref.read(needsDeliveryGateProvider.notifier).state = false;
-    });
-    return stored;
-  }
-  return resolveDeliveryLocation();
+  if (stored != null) return stored;
+  return live;
 });

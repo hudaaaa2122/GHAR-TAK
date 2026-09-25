@@ -83,7 +83,7 @@ class AppTheme {
           ),
           textStyle: AppFonts.style(
             fontWeight: FontWeight.w700,
-            fontSize: 14,
+            fontSize: AppFonts.body,
           ),
         ),
       ),
@@ -98,7 +98,7 @@ class AppTheme {
           ),
           textStyle: AppFonts.style(
             fontWeight: FontWeight.w700,
-            fontSize: 14,
+            fontSize: AppFonts.body,
           ),
         ),
       ),
@@ -113,7 +113,7 @@ class AppTheme {
           ),
           textStyle: AppFonts.style(
             fontWeight: FontWeight.w700,
-            fontSize: 14,
+            fontSize: AppFonts.body,
           ),
         ),
       ),
@@ -178,7 +178,7 @@ class AppTheme {
       listTileTheme: ListTileThemeData(
         titleTextStyle: AppFonts.style(
           fontWeight: FontWeight.w600,
-          fontSize: AppFonts.bodyMd,
+          fontSize: AppFonts.body,
           color: text,
         ),
         subtitleTextStyle: AppFonts.style(
@@ -191,6 +191,7 @@ class AppTheme {
         titleTextStyle: AppFonts.style(
           fontWeight: FontWeight.w800,
           fontSize: AppFonts.titleLg,
+          letterSpacing: -0.22,
           color: text,
         ),
         contentTextStyle: AppFonts.style(

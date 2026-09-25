@@ -26,7 +26,7 @@ class AppFonts {
 
   static TextStyle style({
     FontWeight fontWeight = FontWeight.w400,
-    double fontSize = bodyMd,
+    double fontSize = body,
     Color? color,
     double height = 1.35,
     double letterSpacing = 0,
@@ -156,10 +156,10 @@ class AppFonts {
       titleLarge: map(base.titleLarge, FontWeight.w700, titleLg, h: 1.25),
       titleMedium: map(base.titleMedium, FontWeight.w700, title, h: 1.3),
       titleSmall: map(base.titleSmall, FontWeight.w600, titleSm, h: 1.3),
-      bodyLarge: map(base.bodyLarge, FontWeight.w400, bodyMd, h: 1.45),
+      bodyLarge: map(base.bodyLarge, FontWeight.w400, body, h: 1.45),
       bodyMedium: map(base.bodyMedium, FontWeight.w500, body, h: 1.35),
       bodySmall: map(base.bodySmall, FontWeight.w500, smPlus, h: 1.3),
-      labelLarge: map(base.labelLarge, FontWeight.w700, bodyMd, h: 1.25),
+      labelLarge: map(base.labelLarge, FontWeight.w700, body, h: 1.25),
       labelMedium: map(base.labelMedium, FontWeight.w600, bodySm, h: 1.25),
       labelSmall: map(base.labelSmall, FontWeight.w600, xs, h: 1.2),
     );

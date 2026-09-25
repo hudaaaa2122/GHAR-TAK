@@ -16,6 +16,7 @@ import '../../shared/widgets.dart';
 import '../../shared/figma_chrome.dart';
 import '../location/map_location_picker_screen.dart';
 import '../providers.dart';
+import 'allow_substitution_checkbox.dart';
 
 class CartScreen extends ConsumerStatefulWidget {
   const CartScreen({super.key});
@@ -202,6 +203,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                             ? const NeverScrollableScrollPhysics()
                             : const ClampingScrollPhysics(),
                         children: [
+                          const AllowSubstitutionCheckbox(),
                           ...items.map((item) {
                             final url =
                                 resolveMediaUrl(item.product.image?.best);
@@ -387,6 +389,12 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                           const SizedBox(height: 10),
                           _CartDeliveryCard(),
                           const SizedBox(height: 10),
+                          if (ref.watch(authStateProvider).valueOrNull == null)
+                            _GuestSignInCard(
+                              onSignIn: () => context.push(AppRoutes.login),
+                            ),
+                          if (ref.watch(authStateProvider).valueOrNull == null)
+                            const SizedBox(height: 10),
                           WebCard(
                             padding: const EdgeInsets.all(14),
                             child: Column(
@@ -443,7 +451,6 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                                     ),
                                   ],
                                 ),
-                                ..._freeShipHint(ref, total),
                               ],
                             ),
                           ),
@@ -529,13 +536,29 @@ class _CartScreenState extends ConsumerState<CartScreen> {
         const _SummaryRow(label: 'Fulfillment', value: '…'),
       ];
     }
-    final q = _quote(ref, subtotal);
-    if (q.baseFee <= 0 && shippingAsync.valueOrNull == null) {
+    if (shippingAsync.hasError) {
       return [
-        const _SummaryRow(label: 'Fulfillment', value: '—'),
+        const _SummaryRow(
+          label: 'Fulfillment',
+          value: 'Error',
+          valueColor: AppColors.error,
+        ),
       ];
     }
-    if (q.isFree) {
+    final q = _quote(ref, subtotal);
+    // Website checkout: when free-shipping discount applies, show
+    // ~~Rs. base (e.g. 550)~~ COMPLIMENTARY — not the leftover fee after maxOff.
+    if (q.discount > 0 && q.baseFee > 0) {
+      return [
+        _SummaryRow(
+          label: 'Fulfillment',
+          value: 'COMPLIMENTARY',
+          valueColor: AppColors.successText,
+          struckValue: formatRs(q.baseFee),
+        ),
+      ];
+    }
+    if (q.fee <= 0) {
       return [
         const _SummaryRow(
           label: 'Fulfillment',
@@ -551,36 +574,85 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       ),
     ];
   }
+}
 
-  List<Widget> _freeShipHint(WidgetRef ref, double subtotal) {
-    final q = _quote(ref, subtotal);
-    if (!q.freeShippingEnabled || q.threshold <= 0) return const [];
-    if (subtotal >= q.threshold) {
-      return [
-        const SizedBox(height: 10),
-        Text(
-          'Your order qualifies for complimentary fulfillment!',
-          style: AppFonts.style(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w700,
-            color: AppColors.successText,
+class _GuestSignInCard extends StatelessWidget {
+  const _GuestSignInCard({required this.onSignIn});
+
+  final VoidCallback onSignIn;
+
+  @override
+  Widget build(BuildContext context) {
+    // Website CheckoutPaymentPage guest header — also shown on cart.
+    return WebCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Continue as guest',
+                  style: AppFonts.style(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'No account needed — checkout with your details.',
+                  style: AppFonts.style(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textMuted,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ];
-    }
-    final need = q.threshold - subtotal;
-    return [
-      const SizedBox(height: 10),
-      Text(
-        'Add ${formatRs(need)} more for complimentary fulfillment',
-        style: AppFonts.style(
-          fontSize: 12.5,
-          fontWeight: FontWeight.w600,
-          color: AppColors.textMuted,
-          height: 1.35,
-        ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'Have an account?',
+                style: AppFonts.style(
+                  fontSize: 12,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              const SizedBox(height: 6),
+              OutlinedButton(
+                onPressed: onSignIn,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.primary),
+                  backgroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: Text(
+                  'Sign in',
+                  style: AppFonts.style(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
-    ];
+    );
   }
 }
 
@@ -686,11 +758,14 @@ class _SummaryRow extends StatelessWidget {
     required this.label,
     required this.value,
     this.valueColor,
+    this.struckValue,
   });
 
   final String label;
   final String value;
   final Color? valueColor;
+  /// Website-style crossed-out base fulfillment fee (e.g. ~~Rs. 50~~ COMPLIMENTARY).
+  final String? struckValue;
 
   @override
   Widget build(BuildContext context) {
@@ -705,6 +780,18 @@ class _SummaryRow extends StatelessWidget {
           ),
         ),
         const Spacer(),
+        if (struckValue != null && struckValue!.isNotEmpty) ...[
+          Text(
+            struckValue!,
+            style: AppFonts.style(
+              fontWeight: FontWeight.w500,
+              fontSize: 12,
+              color: AppColors.textMuted,
+              decoration: TextDecoration.lineThrough,
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
         Text(
           value,
           style: AppFonts.style(

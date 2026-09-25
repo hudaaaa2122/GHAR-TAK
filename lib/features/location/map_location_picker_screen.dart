@@ -17,6 +17,8 @@ class MapPickResult {
     this.label,
     this.street,
     this.city,
+    this.state,
+    this.postalCode,
   });
 
   final double lat;
@@ -24,6 +26,8 @@ class MapPickResult {
   final String? label;
   final String? street;
   final String? city;
+  final String? state;
+  final String? postalCode;
 }
 
 /// Full-screen map to choose a delivery pin (OpenStreetMap — no Google key).
@@ -121,6 +125,8 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
     setState(() => _busy = true);
     String? street;
     String? city;
+    String? state;
+    String? postalCode;
     String label =
         '${_pin.latitude.toStringAsFixed(5)}, ${_pin.longitude.toStringAsFixed(5)}';
     try {
@@ -140,6 +146,12 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
             : ((p.subAdministrativeArea ?? '').trim().isNotEmpty
                 ? p.subAdministrativeArea!.trim()
                 : 'Islamabad');
+        state = (p.administrativeArea ?? '').trim().isNotEmpty
+            ? p.administrativeArea!.trim()
+            : null;
+        postalCode = (p.postalCode ?? '').trim().isNotEmpty
+            ? p.postalCode!.trim()
+            : null;
         final parts = <String>[
           if ((p.subLocality ?? '').trim().isNotEmpty) p.subLocality!.trim(),
           if ((p.locality ?? '').trim().isNotEmpty) p.locality!.trim(),
@@ -157,6 +169,8 @@ class _MapLocationPickerScreenState extends State<MapLocationPickerScreen> {
         label: label,
         street: street,
         city: city,
+        state: state,
+        postalCode: postalCode,
       ),
     );
   }

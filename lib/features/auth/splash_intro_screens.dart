@@ -4,11 +4,12 @@ import 'package:smooth_page_indicator/smooth_page_indicator.dart';
 
 import '../../constants/app_routes.dart';
 import '../../constants/figma_assets.dart';
+import '../../core/storage/token_storage.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_fonts.dart';
 import '../../shared/brand_widgets.dart';
 
-/// Splash — Figma node 318:6167. Hold 4s so splash is readable (no white flash).
+/// Splash — Figma node 318:6167. Hold briefly, then resume session or intro.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -20,17 +21,26 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    Future<void>.delayed(const Duration(milliseconds: 2800), _goNext);
+    Future<void>.delayed(const Duration(milliseconds: 1800), _goNext);
   }
 
-  void _goNext() {
+  Future<void> _goNext() async {
     if (!mounted) return;
     try {
-      context.go(AppRoutes.intro);
+      final storage = TokenStorage();
+      final hasSession = await storage.hasSession;
+      final introDone = await storage.introCompleted;
+      if (!mounted) return;
+      if (hasSession || introDone) {
+        context.go(AppRoutes.home);
+      } else {
+        context.go(AppRoutes.intro);
+      }
     } catch (e, st) {
-      debugPrint('Splash→Intro failed: $e\n$st');
+      debugPrint('Splash routing failed: $e\n$st');
+      if (!mounted) return;
       try {
-        context.go(AppRoutes.login);
+        context.go(AppRoutes.home);
       } catch (_) {}
     }
   }
@@ -95,6 +105,12 @@ class _IntroScreenState extends State<IntroScreen> {
     super.dispose();
   }
 
+  Future<void> _finishIntro() async {
+    await TokenStorage().setIntroCompleted(true);
+    if (!mounted) return;
+    context.go(AppRoutes.home);
+  }
+
   void _next() {
     if (_index < _pages.length - 1) {
       _controller.nextPage(
@@ -102,11 +118,11 @@ class _IntroScreenState extends State<IntroScreen> {
         curve: Curves.easeOutCubic,
       );
     } else {
-      context.go(AppRoutes.home);
+      _finishIntro();
     }
   }
 
-  void _skip() => context.go(AppRoutes.home);
+  void _skip() => _finishIntro();
 
   @override
   Widget build(BuildContext context) {

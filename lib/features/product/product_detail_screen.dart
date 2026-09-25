@@ -304,7 +304,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 style: AppFonts.style(
                   fontWeight: FontWeight.w800,
                   fontSize: 22,
-                  height: 1.25,
+                  height: 1.2,
+                  letterSpacing: -0.4,
                   color: palette.textPrimary,
                 ),
               ),
@@ -395,8 +396,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     formatRs(p.displayPrice),
                     style: AppFonts.style(
                       fontWeight: FontWeight.w800,
-                      fontSize: 26,
-                      color: AppColors.primary,
+                      fontSize: 28,
+                      height: 1.0,
+                      color: AppColors.textPrimary,
                     ),
                   ),
                   if (p.hasDiscount) ...[
