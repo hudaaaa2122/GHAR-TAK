@@ -16,15 +16,15 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Install Flutter dependencies
+      - name: Fetch Flutter dependencies
         run: flutter pub get
 
-      - name: Clean and Install CocoaPods
+      - name: Clean and Reinstall CocoaPods
         run: |
-          rm -rf Pods Podfile.lock
+          cd ios
+          rm -rf Pods Podfile.lock .symlinks
           pod repo update
           pod install
-        working-directory: ios
 
       - name: Build iOS Application
         run: flutter build ios --release --no-codesign
